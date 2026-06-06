@@ -29,11 +29,12 @@
           };
         };
 
-        # Cross-GHC compile check for HLS. Self-contained: every supported GHC,
-        # cabal and the C libraries the dependency tree needs are baked into the
-        # wrapper, so it runs against any HLS checkout with no dev shell. Run it
-        # from inside a checkout; it builds all non-test components (override
-        # with COMPAT_TARGETS) against each GHC under +pedantic (-Werror).
+        # Cross-GHC compile check for HLS, as a Python CLI (hls_utils). Self-
+        # contained, every supported GHC, cabal and the C libraries the
+        # dependency tree needs are baked into the wrapper, so it runs against
+        # any HLS checkout with no dev shell.
+        #
+        # Run it from inside a checkout.
         check-ghc-compat =
           let
             ghcs = {
@@ -43,30 +44,48 @@
               ghc912 = pkgs.haskell.packages.ghc912.ghc;
               ghc914 = pkgs.haskell.packages.ghc914.ghc;
             };
-            ghcBindings = pkgs.lib.concatStringsSep "\n  " (
-              pkgs.lib.mapAttrsToList (k: v: "[${k}]=${v}/bin/ghc") ghcs
+            # version -> ghc binary, handed to the CLI as a JSON file path
+            # (passing the JSON inline trips makeWrapper's argument parsing).
+            ghcsFile = pkgs.writeText "hls-compat-ghcs.json" (
+              builtins.toJSON (pkgs.lib.mapAttrs (_: ghc: "${ghc}/bin/ghc") ghcs)
             );
           in
-          pkgs.writeShellScriptBin "hls-check-ghc-compat" ''
-            export PATH=${
-              pkgs.lib.makeBinPath [
+          pkgs.python3Packages.buildPythonApplication {
+            pname = "hls-check-ghc-compat";
+            version = "0.1.0";
+            pyproject = true;
+            src = pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.unions [
+                ./pyproject.toml
+                ./hls_utils
+              ];
+            };
+            build-system = [ pkgs.python3Packages.setuptools ];
+            # Bake the runtime tools, C libraries and GHC map into the launcher
+            # so the binary works in a bare HLS checkout.
+            makeWrapperArgs = [
+              "--prefix"
+              "PATH"
+              ":"
+              (pkgs.lib.makeBinPath [
                 pkgs.cabal-install
                 pkgs.pkg-config
                 pkgs.curl
-              ]
-            }:$PATH
-            export LD_LIBRARY_PATH=${
-              pkgs.lib.makeLibraryPath [
+              ])
+              "--prefix"
+              "LD_LIBRARY_PATH"
+              ":"
+              (pkgs.lib.makeLibraryPath [
                 pkgs.gmp
                 pkgs.zlib
                 pkgs.ncurses
-              ]
-            }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-            declare -A GHC_BIN=(
-              ${ghcBindings}
-            )
-            ${builtins.readFile ./check-ghc-compat.sh}
-          '';
+              ])
+              "--set"
+              "HLS_COMPAT_GHCS_FILE"
+              "${ghcsFile}"
+            ];
+          };
 
         # The collection. Add new HLS utilities here; each one becomes a
         # `nix run`/`nix build`/`nix profile install` target automatically.
@@ -75,8 +94,7 @@
         };
 
         # Formatting / linting hooks: installed into .git/hooks on `nix develop`
-        # and enforced by `nix flake check`. nixfmt for Nix; shfmt (2-space
-        # indent, matching the existing scripts) + shellcheck for shell.
+        # and enforced by `nix flake check`.
         pre-commit-check = git-hooks.lib.${system}.run {
           src = ./.;
           hooks = {
@@ -86,6 +104,9 @@
               # this nixpkgs; use the canonical attr to silence the eval warning.
               package = pkgs.nixfmt;
             };
+            ruff.enable = true;
+            ruff-format.enable = true;
+            pyright.enable = true;
             shfmt = {
               enable = true;
               args = [
@@ -107,11 +128,11 @@
 
         # A shell that puts every utility on PATH at once (`nix develop`, or
         # `use flake` from a checkout's .envrc). Stays in sync with `utils`.
-        # Entering it also installs the git pre-commit hook and adds the
-        # nixfmt/shfmt/shellcheck binaries the hooks use.
+        # Entering it also installs the git pre-commit hook and adds the hook
+        # binaries (nixfmt/ruff/pyright/shfmt/shellcheck) plus a Python.
         devShells.default = pkgs.mkShell {
           inherit (pre-commit-check) shellHook;
-          packages = builtins.attrValues utils ++ pre-commit-check.enabledPackages;
+          packages = builtins.attrValues utils ++ pre-commit-check.enabledPackages ++ [ pkgs.python3 ];
         };
 
         apps = {

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hls-utils"
+version = "0.1.0"
+description = "Nix-packaged utilities for working on Haskell Language Server"
+requires-python = ">=3.13"
+
+[project.scripts]
+hls-check-ghc-compat = "hls_utils.check_ghc_compat:main"
+
+[tool.setuptools]
+packages = ["hls_utils"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["hls_utils"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"

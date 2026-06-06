@@ -4,3 +4,10 @@
 # `nix build` output symlinks.
 /result
 /result-*
+
+# Python build / tool artifacts.
+__pycache__/
+*.egg-info/
+.ruff_cache/
+/build/
+/dist/
