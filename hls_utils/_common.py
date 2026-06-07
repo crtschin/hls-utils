@@ -26,10 +26,17 @@ def load_ghc_map() -> dict[str, str]:
     """Parse the version -> ghc-binary map the Nix wrapper injects.
 
     HLS_GHCS_FILE points at a JSON file (what the Nix build sets); HLS_GHCS may
-    hold the same JSON inline (handy for tests).
+    hold the same JSON inline (handy for tests). A missing file or empty/absent
+    env yields an empty map; present-but-malformed JSON still raises.
     """
     path = os.environ.get("HLS_GHCS_FILE")
-    raw = Path(path).read_text() if path else os.environ.get("HLS_GHCS")
+    if path:
+        try:
+            raw = Path(path).read_text()
+        except FileNotFoundError:
+            return {}
+    else:
+        raw = os.environ.get("HLS_GHCS")
     if not raw:
         return {}
     data: object = json.loads(raw)
