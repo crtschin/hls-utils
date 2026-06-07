@@ -126,13 +126,17 @@
         # `nix flake check` runs every hook over the tree and fails on diffs.
         checks.pre-commit-check = pre-commit-check;
 
-        # A shell that puts every utility on PATH at once (`nix develop`, or
-        # `use flake` from a checkout's .envrc). Stays in sync with `utils`.
-        # Entering it also installs the git pre-commit hook and adds the hook
-        # binaries (nixfmt/ruff/pyright/shfmt/shellcheck) plus a Python.
+        # For developing hls-utils itself (`nix develop`). Entering it installs
+        # this repo's git pre-commit hook. Stays in sync with `utils`.
         devShells.default = pkgs.mkShell {
           inherit (pre-commit-check) shellHook;
           packages = builtins.attrValues utils ++ pre-commit-check.enabledPackages ++ [ pkgs.python3 ];
+        };
+
+        # Binaries-only shell for layering onto another checkout's .envrc
+        # (`use flake`). No shellHook.
+        devShells.tools = pkgs.mkShell {
+          packages = builtins.attrValues utils;
         };
 
         apps = {
