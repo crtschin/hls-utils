@@ -87,6 +87,8 @@
               pkgs.cabal-install
               pkgs.pkg-config
               pkgs.curl
+              # hls-find-ghc-backports queries a GHC clone via git.
+              pkgs.git
             ])
             "--prefix"
             "LD_LIBRARY_PATH"
@@ -220,6 +222,10 @@
           run-testsuites = {
             type = "app";
             program = "${hls-run-testsuites}/bin/hls-run-testsuites";
+          };
+          find-ghc-backports = {
+            type = "app";
+            program = "${hls-utils}/bin/hls-find-ghc-backports";
           };
           default = {
             type = "app";

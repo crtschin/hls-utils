@@ -11,6 +11,7 @@ requires-python = ">=3.13"
 [project.scripts]
 hls-check-ghc-compat = "hls_utils.check_ghc_compat:main"
 hls-run-testsuites-core = "hls_utils.run_testsuites:main"
+hls-find-ghc-backports = "hls_utils.ghc_backports:main"
 
 [tool.setuptools]
 packages = ["hls_utils"]

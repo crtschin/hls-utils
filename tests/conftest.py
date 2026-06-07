@@ -8,7 +8,7 @@ assert the commands the tools *would* run and their control flow.
 import pytest
 
 # Every env var the tools read; cleared before each test to avoid leakage.
-_ENV_VARS = ("HLS_GHCS", "HLS_GHCS_FILE", "TEST_TARGETS", "COMPAT_TARGETS")
+_ENV_VARS = ("HLS_GHCS", "HLS_GHCS_FILE", "TEST_TARGETS", "COMPAT_TARGETS", "GHC_REPO")
 
 
 @pytest.fixture(autouse=True)
@@ -29,9 +29,10 @@ def valid_checkout(tmp_path, monkeypatch):
 class FakeCompleted:
     """Minimal stand-in for subprocess.CompletedProcess."""
 
-    def __init__(self, returncode=0, stdout=""):
+    def __init__(self, returncode=0, stdout="", stderr=""):
         self.returncode = returncode
         self.stdout = stdout
+        self.stderr = stderr
 
 
 class Recorder:
@@ -65,6 +66,33 @@ class Recorder:
 def make_recorder():
     """Factory for Recorder instances (e.g. ``make_recorder(returncodes=[0, 1])``)."""
     return Recorder
+
+
+class GitRecorder:
+    """subprocess.run stand-in for git tools: dispatch on argv via *responder*.
+
+    ``responder(argv) -> (returncode, stdout)`` lets a test return canned output
+    per git subcommand (rev-parse, log --grep, tag/branch --contains, show).
+    Recorded ``calls`` are the git argv (the leading ``git -C <repo>`` stripped).
+    """
+
+    def __init__(self, responder):
+        self.calls = []  # list of git argv (without `git -C <repo>`)
+        self._responder = responder
+
+    def __call__(self, cmd, *args, **kwargs):
+        argv = list(cmd)
+        # Drop the `git -C <repo>` prefix so matchers see just the subcommand.
+        git_args = argv[3:] if argv[:1] == ["git"] and argv[1:2] == ["-C"] else argv
+        self.calls.append(git_args)
+        rc, out = self._responder(git_args)
+        return FakeCompleted(rc, out)
+
+
+@pytest.fixture
+def make_git_recorder():
+    """Factory for GitRecorder (e.g. ``make_git_recorder(responder)``)."""
+    return GitRecorder
 
 
 @pytest.fixture
