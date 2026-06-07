@@ -14,6 +14,11 @@ use flake github:crtschin/hls-utils#tools
 
 ```sh
 direnv allow
-# now hls-check-ghc-compat is on PATH inside the checkout
-hls-check-ghc-compat
+# now the tools are on PATH inside the checkout
+hls-check-ghc-compat    # cross-GHC compile check (+pedantic / -Werror)
+hls-run-testsuites      # run the test suites against every supported GHC
+hls-find-ghc-backports  # find which released GHC versions contain backports
 ```
+
+Both default to sweeping every supported GHC; pass versions to narrow it
+(e.g. `hls-run-testsuites ghc912`) or `-t/--targets` to pick cabal targets.

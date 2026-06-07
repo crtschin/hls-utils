@@ -29,13 +29,14 @@
           };
         };
 
-        # Cross-GHC compile check for HLS, as a Python CLI (hls_utils). Self-
-        # contained, every supported GHC, cabal and the C libraries the
-        # dependency tree needs are baked into the wrapper, so it runs against
-        # any HLS checkout with no dev shell.
+        # The hls_utils Python package, exposing every CLI as a console script
+        # (hls-check-ghc-compat, hls-run-testsuites). Self-contained: every
+        # supported GHC, cabal and the C libraries the dependency tree needs are
+        # baked into the wrapper, so the tools run against any HLS checkout with
+        # no dev shell.
         #
-        # Run it from inside a checkout.
-        check-ghc-compat =
+        # Run them from inside a checkout.
+        hls-utils =
           let
             ghcs = {
               ghc96 = pkgs.haskell.packages.ghc96.ghc;
@@ -51,7 +52,7 @@
             );
           in
           pkgs.python3Packages.buildPythonApplication {
-            pname = "hls-check-ghc-compat";
+            pname = "hls-utils";
             version = "0.1.0";
             pyproject = true;
             src = pkgs.lib.fileset.toSource {
@@ -82,15 +83,16 @@
                 pkgs.ncurses
               ])
               "--set"
-              "HLS_COMPAT_GHCS_FILE"
+              "HLS_GHCS_FILE"
               "${ghcsFile}"
             ];
           };
 
-        # The collection. Add new HLS utilities here; each one becomes a
-        # `nix run`/`nix build`/`nix profile install` target automatically.
+        # The collection. All CLIs ship in the single hls-utils package; add a
+        # new one by declaring its console script in pyproject.toml and an entry
+        # under `apps` below.
         utils = {
-          inherit check-ghc-compat;
+          inherit hls-utils;
         };
 
         # Formatting / linting hooks: installed into .git/hooks on `nix develop`
@@ -120,7 +122,7 @@
       in
       {
         packages = utils // {
-          default = check-ghc-compat;
+          default = hls-utils;
         };
 
         # `nix flake check` runs every hook over the tree and fails on diffs.
@@ -142,11 +144,15 @@
         apps = {
           check-ghc-compat = {
             type = "app";
-            program = "${check-ghc-compat}/bin/hls-check-ghc-compat";
+            program = "${hls-utils}/bin/hls-check-ghc-compat";
+          };
+          run-testsuites = {
+            type = "app";
+            program = "${hls-utils}/bin/hls-run-testsuites";
           };
           default = {
             type = "app";
-            program = "${check-ghc-compat}/bin/hls-check-ghc-compat";
+            program = "${hls-utils}/bin/hls-check-ghc-compat";
           };
         };
       }

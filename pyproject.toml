@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 
 [project.scripts]
 hls-check-ghc-compat = "hls_utils.check_ghc_compat:main"
+hls-run-testsuites = "hls_utils.run_testsuites:main"
 
 [tool.setuptools]
 packages = ["hls_utils"]

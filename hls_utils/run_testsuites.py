@@ -1,11 +1,14 @@
-"""Cross-GHC compile check for haskell-language-server.
+"""Cross-GHC test-suite runner for haskell-language-server.
 
-Builds every components against each supported GHC to catch cross-version
-compat-shim breakage, mirroring the CI ``flags`` job (``+pedantic`` /
-``-Werror``).
+Runs the project's test suites against each supported GHC via ``cabal test``,
+mirroring CI's per-version test job. Companion to ``hls-check-ghc-compat``,
+which only type-checks under ``+pedantic``; this actually exercises the suites.
 
-NB: Each version gets its own ``--builddir``. The shared cabal store caches
-dependencies, so re-runs only recompile the local packages.
+NB: Each version gets its own ``--builddir``, separate from the compat tool's,
+since the test build is configured differently (tests enabled, no -Werror) and
+sharing a builddir would force cabal to reconfigure on every alternating run.
+The shared cabal store still caches dependencies, so re-runs only recompile the
+local packages.
 
 The Nix wrapper bakes the GHC compilers, cabal and the needed C libraries into
 the environment. Run it from inside an HLS checkout.
@@ -19,7 +22,7 @@ from pathlib import Path
 
 from hls_utils._common import DEFAULT_VERSIONS, find_hls_checkout, load_ghc_map
 
-PROJECT_NAME = ".hls-compat.project"
+PROJECT_NAME = ".hls-test.project"
 # Inherit the checkout's cabal.project but skip the developer's
 # cabal.project.local (profiling, dumps); cabal resolves package paths relative
 # to this file, so it must live in the checkout. The name is stable and the
@@ -29,19 +32,18 @@ MAX_BACKJUMPS = 10000
 TAIL_LINES = 25
 
 
-def resolve_targets(cli_targets: list[str] | None) -> tuple[list[str], list[str]]:
-    """Return the cabal targets and the extra build flags to use.
+def resolve_targets(cli_targets: list[str] | None) -> list[str]:
+    """Return the cabal test targets to run.
 
-    An explicit selection (``--targets`` or ``COMPAT_TARGETS``) is built
-    verbatim, so it may name test suites. With no selection we sweep ``all``
-    local components and disable test suites.
+    An explicit selection (``--targets`` or ``TEST_TARGETS``) is run verbatim;
+    with no selection we run ``all`` test suites in the project.
     """
     if cli_targets:
-        return cli_targets, []
-    env = os.environ.get("COMPAT_TARGETS")
+        return cli_targets
+    env = os.environ.get("TEST_TARGETS")
     if env:
-        return env.split(), []
-    return ["all"], ["--disable-tests"]
+        return env.split()
+    return ["all"]
 
 
 def run_for_version(
@@ -49,10 +51,9 @@ def run_for_version(
     ghc: str,
     hls_dir: Path,
     targets: list[str],
-    extra_flags: list[str],
 ) -> bool:
-    """Build *targets* with one GHC, logging to compat-logs/<version>.log."""
-    log_path = hls_dir / "compat-logs" / f"{version}.log"
+    """Run *targets* under one GHC, logging to test-logs/<version>.log."""
+    log_path = hls_dir / "test-logs" / f"{version}.log"
     print(f"=== {version} -> {log_path} ===")
     numeric = subprocess.run(
         [ghc, "--numeric-version"],
@@ -62,16 +63,16 @@ def run_for_version(
     ).stdout.strip()
     cmd = [
         "cabal",
-        "build",
+        "test",
         "-w",
         ghc,
         f"--project-file={PROJECT_NAME}",
         "--max-backjumps",
         str(MAX_BACKJUMPS),
-        f"--builddir=dist-newstyle/compat-{version}",
-        "--constraint",
-        "haskell-language-server +pedantic",
-        *extra_flags,
+        f"--builddir=dist-newstyle/test-{version}",
+        # Stream each suite's output into the log so a failure tail is useful;
+        # the default ('failures') hides output for suites cabal deems passing.
+        "--test-show-details=streaming",
         *targets,
     ]
     with log_path.open("w") as log:
@@ -95,24 +96,21 @@ def run_for_version(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="hls-check-ghc-compat",
-        description=(
-            "Build HLS components against every supported GHC under +pedantic "
-            "to catch cross-version compat breakage."
-        ),
+        prog="hls-run-testsuites",
+        description=("Run HLS test suites against every supported GHC via cabal test."),
     )
     parser.add_argument(
         "versions",
         nargs="*",
-        help=f"GHC versions to check (default: {' '.join(DEFAULT_VERSIONS)}).",
+        help=f"GHC versions to test (default: {' '.join(DEFAULT_VERSIONS)}).",
     )
     parser.add_argument(
         "-t",
         "--targets",
         nargs="+",
         help=(
-            "cabal targets to build (default: all non-test components). "
-            "Overrides COMPAT_TARGETS; built verbatim, so may name test suites."
+            "cabal test targets to run (default: all test suites). "
+            "Overrides TEST_TARGETS; run verbatim."
         ),
     )
     args = parser.parse_args(argv)
@@ -127,11 +125,11 @@ def main(argv: list[str] | None = None) -> int:
 
     ghc_map = load_ghc_map()
     versions: list[str] = args.versions or DEFAULT_VERSIONS
-    targets, extra_flags = resolve_targets(args.targets)
+    targets = resolve_targets(args.targets)
 
     project_path = hls_dir / PROJECT_NAME
     project_path.write_text(PROJECT_CONTENT)
-    (hls_dir / "compat-logs").mkdir(parents=True, exist_ok=True)
+    (hls_dir / "test-logs").mkdir(parents=True, exist_ok=True)
 
     rc = 0
     try:
@@ -142,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"=== {version}: unknown version (have: {known}) ===")
                 rc = 1
                 continue
-            if not run_for_version(version, ghc, hls_dir, targets, extra_flags):
+            if not run_for_version(version, ghc, hls_dir, targets):
                 rc = 1
     finally:
         project_path.unlink(missing_ok=True)
