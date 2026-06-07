@@ -66,9 +66,14 @@
             fileset = pkgs.lib.fileset.unions [
               ./pyproject.toml
               ./hls_utils
+              ./tests
             ];
           };
           build-system = [ pkgs.python3Packages.setuptools ];
+          # Run the pytest suite in checkPhase, so `nix build` / `nix flake check`
+          # fail if the tools' logic regresses. tests/ ships in src but not in the
+          # wheel (the packages allowlist below excludes it).
+          nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
           # Bake the runtime tools, GHC map and C libraries into the launcher
           # so the binary works in a bare HLS checkout. The C libs go on three
           # paths: LD_LIBRARY_PATH for runtime, LIBRARY_PATH for the linker
@@ -162,7 +167,13 @@
             };
             ruff.enable = true;
             ruff-format.enable = true;
-            pyright.enable = true;
+            pyright = {
+              enable = true;
+              # Scope to the package, matching pyproject's include = ["hls_utils"].
+              # tests/ is deliberately not type-checked: it leans on pytest, which
+              # isn't on the type-checker's path.
+              files = "^hls_utils/";
+            };
             shfmt = {
               enable = true;
               args = [
@@ -186,7 +197,13 @@
         # this repo's git pre-commit hook. Stays in sync with `utils`.
         devShells.default = pkgs.mkShell {
           inherit (pre-commit-check) shellHook;
-          packages = builtins.attrValues utils ++ pre-commit-check.enabledPackages ++ [ pkgs.python3 ];
+          packages =
+            builtins.attrValues utils
+            ++ pre-commit-check.enabledPackages
+            ++ [
+              pkgs.python3
+              pkgs.python3Packages.pytest
+            ];
         };
 
         # Binaries-only shell for layering onto another checkout's .envrc

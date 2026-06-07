@@ -26,3 +26,13 @@ select = ["E", "F", "I", "UP", "B"]
 include = ["hls_utils"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Put the repo root on sys.path so `import hls_utils` works without an install
+# (local `pytest` in the dev shell; the Nix checkPhase runs from the source root).
+pythonpath = ["."]
+
+[dependency-groups]
+# Informational: the Nix build gets pytest from nixpkgs, not PyPI.
+test = ["pytest>=8"]
