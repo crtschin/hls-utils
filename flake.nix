@@ -52,6 +52,16 @@
           pkgs.ncurses
         ];
 
+        # Shared by the launcher and the test check below, keeping them in sync.
+        src = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./pyproject.toml
+            ./hls_utils
+            ./tests
+          ];
+        };
+
         # The hls_utils Python package: hls-check-ghc-compat, the
         # hls-run-testsuites-core launcher, hls-find-ghc-backports and
         # hls-clear-caches. Self-contained: every supported GHC,
@@ -62,14 +72,7 @@
           pname = "hls-utils";
           version = "0.1.0";
           pyproject = true;
-          src = pkgs.lib.fileset.toSource {
-            root = ./.;
-            fileset = pkgs.lib.fileset.unions [
-              ./pyproject.toml
-              ./hls_utils
-              ./tests
-            ];
-          };
+          inherit src;
           build-system = [ pkgs.python3Packages.setuptools ];
           # Run the pytest suite in checkPhase, so `nix build` / `nix flake check`
           # fail if the tools' logic regresses. tests/ ships in src but not in the
@@ -108,6 +111,20 @@
             "${ghcsFile}"
           ];
         };
+
+        # Runs the hermetic pytest suite without the launcher's 14.7 GiB GHC
+        # closure. The source is copied out of the read-only store so pytest can
+        # write its caches. pyproject's pythonpath = ["."] resolves
+        # `import hls_utils`.
+        hls-utils-tests =
+          pkgs.runCommandLocal "hls-utils-tests"
+            { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pytest ])) ]; }
+            ''
+              cp -r ${src}/. .
+              chmod -R +w .
+              pytest
+              touch "$out"
+            '';
 
         # User-facing test runner. A plain shell script (NOT a makeWrapper'd
         # binary) on purpose: each per-version `cabal test` must be launched
@@ -193,8 +210,12 @@
           default = hls-utils;
         };
 
-        # `nix flake check` runs every hook over the tree and fails on diffs.
-        checks.pre-commit-check = pre-commit-check;
+        # `nix flake check` runs both: the formatting hooks over the tree
+        # (failing on diffs) and the pytest suite.
+        checks = {
+          pre-commit-check = pre-commit-check;
+          pytest = hls-utils-tests;
+        };
 
         # For developing hls-utils itself (`nix develop`). Entering it installs
         # this repo's git pre-commit hook. Stays in sync with `utils`.
