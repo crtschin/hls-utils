@@ -17,7 +17,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hls_utils._common import DEFAULT_VERSIONS, find_hls_checkout, load_ghc_map
+from hls_utils._common import (
+    COMPAT_BUILDDIR_PREFIX,
+    DEFAULT_VERSIONS,
+    find_hls_checkout,
+    load_ghc_map,
+)
 
 PROJECT_NAME = ".hls-compat.project"
 # Inherit the checkout's cabal.project but skip the developer's
@@ -68,7 +73,7 @@ def run_for_version(
         f"--project-file={PROJECT_NAME}",
         "--max-backjumps",
         str(MAX_BACKJUMPS),
-        f"--builddir=dist-newstyle/compat-{version}",
+        f"--builddir={COMPAT_BUILDDIR_PREFIX}{version}",
         "--constraint",
         "haskell-language-server +pedantic",
         *extra_flags,

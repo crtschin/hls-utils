@@ -52,8 +52,9 @@
           pkgs.ncurses
         ];
 
-        # The hls_utils Python package: hls-check-ghc-compat and the
-        # hls-run-testsuites-core launcher. Self-contained: every supported GHC,
+        # The hls_utils Python package: hls-check-ghc-compat, the
+        # hls-run-testsuites-core launcher, hls-find-ghc-backports and
+        # hls-clear-caches. Self-contained: every supported GHC,
         # cabal and the C libraries the dependency tree needs are baked into the
         # wrapper, so the tools run against any HLS checkout with no dev shell.
         # Run them from inside a checkout.
@@ -226,6 +227,10 @@
           find-ghc-backports = {
             type = "app";
             program = "${hls-utils}/bin/hls-find-ghc-backports";
+          };
+          clear-caches = {
+            type = "app";
+            program = "${hls-utils}/bin/hls-clear-caches";
           };
           default = {
             type = "app";

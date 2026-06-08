@@ -28,7 +28,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hls_utils._common import find_hls_checkout, load_ghc_map
+from hls_utils._common import (
+    TEST_BUILDDIR_PREFIX,
+    find_hls_checkout,
+    load_ghc_map,
+)
 
 PROJECT_NAME = ".hls-test.project"
 # Inherit the checkout's cabal.project but skip the developer's
@@ -84,7 +88,7 @@ def run_for_version(
         f"--project-file={PROJECT_NAME}",
         "--max-backjumps",
         str(MAX_BACKJUMPS),
-        f"--builddir=dist-newstyle/test-{version}",
+        f"--builddir={TEST_BUILDDIR_PREFIX}{version}",
         # Stream each suite's output into the log so a failure tail is useful.
         # The default ('failures') hides output for suites cabal deems passing.
         "--test-show-details=streaming",
