@@ -44,8 +44,8 @@ def test_seed_commits_mr_warns_when_absent(make_git_recorder, install_run):
 def test_related_commits_expands_provenance_chain_and_subject(
     make_git_recorder, install_run
 ):
-    # aaa is the seed; bbb cherry-picks aaa; ccc cherry-picks bbb (a re-backport
-    # chain); ddd shares the subject but lacks the -x trailer.
+    # aaa is the seed, bbb cherry-picks aaa, ccc cherry-picks bbb (a re-backport
+    # chain), ddd shares the subject but lacks the -x trailer.
     def responder(argv):
         if argv[:2] == ["show", "-s"]:
             return (0, "Fix foo")
@@ -71,7 +71,7 @@ def test_related_commits_expands_provenance_chain_and_subject(
 
 def test_related_commits_issue_does_not_expand(make_git_recorder, install_run):
     # An issue ref is preserved across cherry-picks, so the grep already found
-    # the backports; we must NOT run provenance/subject expansion (avoids noise).
+    # the backports. We must NOT run provenance/subject expansion (avoids noise).
     rec = install_run(gb, make_git_recorder(lambda argv: (0, "")))
     reasons = gb.related_commits(REPO, "issue", ["aaa", "bbb"])
     assert reasons == {"aaa": "issue-grep", "bbb": "issue-grep"}

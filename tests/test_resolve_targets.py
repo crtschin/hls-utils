@@ -40,7 +40,7 @@ def test_compat_default_disables_tests():
 
 
 def test_default_asymmetry_between_tools():
-    """Test-runner default carries no --disable-tests; compat default does."""
+    """Test-runner default carries no --disable-tests, compat default does."""
     rt_targets = run_testsuites.resolve_targets(None)
     _compat_targets, compat_flags = check_ghc_compat.resolve_targets(None)
     assert "--disable-tests" not in rt_targets

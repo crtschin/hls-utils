@@ -8,7 +8,7 @@ GHC = "/nix/store/abc-ghc-9.6.7/bin/ghc"
 
 
 def _make_logs(checkout):
-    # run_for_version opens test-logs/<version>.log directly; main() makes the dir.
+    # run_for_version opens test-logs/<version>.log directly. main() makes the dir.
     (checkout / "test-logs").mkdir(parents=True, exist_ok=True)
 
 

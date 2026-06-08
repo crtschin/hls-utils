@@ -1,6 +1,6 @@
 """Cross-GHC compile check for haskell-language-server.
 
-Builds every components against each supported GHC to catch cross-version
+Builds all components against each supported GHC to catch cross-version
 compat-shim breakage, mirroring the CI ``flags`` job (``+pedantic`` /
 ``-Werror``).
 
@@ -21,7 +21,7 @@ from hls_utils._common import DEFAULT_VERSIONS, find_hls_checkout, load_ghc_map
 
 PROJECT_NAME = ".hls-compat.project"
 # Inherit the checkout's cabal.project but skip the developer's
-# cabal.project.local (profiling, dumps); cabal resolves package paths relative
+# cabal.project.local (profiling, dumps). cabal resolves package paths relative
 # to this file, so it must live in the checkout. The name is stable and the
 # content fixed, so cabal does not reconfigure between runs.
 PROJECT_CONTENT = "import: cabal.project\n\njobs: 6\n"
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         help=(
             "cabal targets to build (default: all non-test components). "
-            "Overrides COMPAT_TARGETS; built verbatim, so may name test suites."
+            "Overrides COMPAT_TARGETS. Built verbatim, so may name test suites."
         ),
     )
     args = parser.parse_args(argv)

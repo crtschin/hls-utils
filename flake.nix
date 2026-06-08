@@ -164,7 +164,7 @@
             nixfmt-rfc-style = {
               enable = true;
               # pkgs.nixfmt-rfc-style is a deprecated alias for pkgs.nixfmt in
-              # this nixpkgs; use the canonical attr to silence the eval warning.
+              # this nixpkgs. Use the canonical attr to silence the eval warning.
               package = pkgs.nixfmt;
             };
             ruff.enable = true;

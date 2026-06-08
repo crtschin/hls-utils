@@ -12,9 +12,9 @@ treeless clone is enough (commit graph + tags, no blobs)::
 
     git clone --filter=tree:0 --mirror https://gitlab.haskell.org/ghc/ghc.git
 
-Known limits: a later revert is invisible to ``--contains``; ``!MR`` lookup is
+Known limits: a later revert is invisible to ``--contains``. ``!MR`` lookup is
 heuristic (marge-bot rebases drop the MR number from commit text, so prefer the
-SHA); identical commit subjects can collide.
+SHA). Identical commit subjects can collide.
 """
 
 import argparse
@@ -86,7 +86,7 @@ def resolve_repo(repo_arg: str | None) -> Path:
     raw = repo_arg or os.environ.get("GHC_REPO")
     if not raw:
         raise BackportsError(
-            "no GHC repo given; pass --repo PATH or set GHC_REPO.\n"
+            "no GHC repo given. Pass --repo PATH or set GHC_REPO.\n"
             "A lightweight clone is enough:\n"
             "  git clone --filter=tree:0 --mirror "
             "https://gitlab.haskell.org/ghc/ghc.git ~/src/ghc"
@@ -109,7 +109,7 @@ def subject_of(repo: Path, sha: str) -> str:
 def cherry_pick_descendants(repo: Path, seeds: set[str]) -> set[str]:
     """Full SHAs that cherry-picked (``-x``) any seed, transitively.
 
-    ``git cherry-pick -x`` writes ``(cherry picked from commit <full-sha>)``; a
+    ``git cherry-pick -x`` writes ``(cherry picked from commit <full-sha>)``. A
     re-backport references the previous backport, so iterate to a fixpoint.
     """
     known = set(seeds)
@@ -141,7 +141,7 @@ def seed_commits(repo: Path, kind: str, value: str) -> tuple[list[str], str | No
     note = None
     if not shas and kind == "mr":
         note = (
-            f"no commit references !{value}; marge-bot rebases often drop the MR "
+            f"no commit references !{value}. marge-bot rebases often drop the MR "
             "number from commit text, so try the commit SHA instead."
         )
     return (shas, note)
@@ -159,7 +159,7 @@ def related_commits(repo: Path, kind: str, seeds: list[str]) -> dict[str, str]:
     for sha in seeds:
         reasons.setdefault(sha, seed_reason)
     # For a SHA the backports have *different* SHAs, so expand. An issue ref is
-    # preserved across cherry-picks, so its grep already found them; an MR ref is
+    # preserved across cherry-picks, so its grep already found them. An MR ref is
     # not, so expand there too.
     if kind in ("sha", "mr"):
         for sha in cherry_pick_descendants(repo, set(seeds)):
@@ -204,7 +204,7 @@ def classify_target(target: str) -> tuple[str, str]:
     if SHA_RE.match(target):
         return ("sha", target)
     raise BackportsError(
-        f"unrecognized target {target!r}; expected a commit SHA, #ISSUE or !MR"
+        f"unrecognized target {target!r}. Expected a commit SHA, #ISSUE or !MR"
     )
 
 
@@ -257,7 +257,7 @@ def compute_coverage(
                 commit_master = True
             elif (s := parse_branch_series(branch)) is not None:
                 series.add(s)
-        # Skip a commit that contributes nothing we surface -- e.g. a same-subject
+        # Skip a commit that contributes nothing we surface, e.g. a same-subject
         # match reachable only from a wip branch parses to no release/series/master.
         # Pre-release-only commits count only when we are showing pre-releases.
         if not (
@@ -336,8 +336,8 @@ def main(argv: list[str] | None = None) -> int:
             "local GHC clone."
         ),
         epilog=(
-            "Known limits: reverts are invisible to --contains; !MR lookup is "
-            "heuristic (prefer the SHA); identical subjects can collide."
+            "Known limits: reverts are invisible to --contains. !MR lookup is "
+            "heuristic (prefer the SHA). Identical subjects can collide."
         ),
     )
     parser.add_argument("target", help="commit SHA, #ISSUE or !MR (quote # and !).")

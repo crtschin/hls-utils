@@ -56,7 +56,7 @@ def _success_responder(argv):
     if argv[0] == "branch":
         return (0, "* master\n  remotes/origin/ghc-9.12")
     if argv[0] == "log":
-        # Subject grep matches the seed itself; cherry-pick greps find nothing.
+        # Subject grep matches the seed itself. Cherry-pick greps find nothing.
         return (0, "a" * 40) if "--grep=Fix foo" in argv else (0, "")
     return (0, "")
 

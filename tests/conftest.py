@@ -7,7 +7,7 @@ assert the commands the tools *would* run and their control flow.
 
 import pytest
 
-# Every env var the tools read; cleared before each test to avoid leakage.
+# Every env var the tools read, cleared before each test to avoid leakage.
 _ENV_VARS = ("HLS_GHCS", "HLS_GHCS_FILE", "TEST_TARGETS", "COMPAT_TARGETS", "GHC_REPO")
 
 
@@ -97,7 +97,7 @@ def make_git_recorder():
 
 @pytest.fixture
 def install_run(monkeypatch):
-    """Patch *module*'s subprocess.run with *recorder*; returns the recorder."""
+    """Patch *module*'s subprocess.run with *recorder*. Returns the recorder."""
 
     def _install(module, recorder):
         monkeypatch.setattr(module.subprocess, "run", recorder)

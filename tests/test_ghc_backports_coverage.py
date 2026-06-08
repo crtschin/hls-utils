@@ -13,7 +13,7 @@ def _commit(reason="seed", subject="Fix foo", tags=(), branches=()):
 
 
 def test_backport_first_release_per_series_numeric_min():
-    # Original on master + 9.12/9.14; backport (different SHA) on 9.10.
+    # Original on master + 9.12/9.14, backport (different SHA) on 9.10.
     data = {
         "aaa": _commit(
             tags=["ghc-9.12.1-release", "ghc-9.14.1-release"],

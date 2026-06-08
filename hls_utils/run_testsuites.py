@@ -2,11 +2,11 @@
 
 Runs the project's test suites against a GHC via ``cabal test``, mirroring CI's
 per-version test job. Companion to ``hls-check-ghc-compat``, which only
-type-checks under ``+pedantic``; this actually exercises the suites.
+type-checks under ``+pedantic``. This actually exercises the suites.
 
 This is the ``hls-run-testsuites-core`` launcher. It assumes the GHC it builds
-and runs against is already first on PATH -- the ``hls-run-testsuites`` shell
-wrapper arranges that per version before invoking us. The pinning has to happen
+and runs against is already first on PATH, which the ``hls-run-testsuites``
+shell wrapper arranges per version before invoking us. The pinning has to happen
 in a shell with no makeWrapper in the process ancestry: HLS testdata uses a
 direct cradle, so a running test resolves its GHC libdir by invoking ``ghc`` off
 PATH, and that PATH only reaches the spawned test under that condition. Building
@@ -32,7 +32,7 @@ from hls_utils._common import find_hls_checkout, load_ghc_map
 
 PROJECT_NAME = ".hls-test.project"
 # Inherit the checkout's cabal.project but skip the developer's
-# cabal.project.local (profiling, dumps); cabal resolves package paths relative
+# cabal.project.local (profiling, dumps). cabal resolves package paths relative
 # to this file, so it must live in the checkout. The name is stable and the
 # content fixed, so cabal does not reconfigure between runs.
 PROJECT_CONTENT = "import: cabal.project\n\njobs: 6\n"
@@ -43,8 +43,8 @@ TAIL_LINES = 25
 def resolve_targets(cli_targets: list[str] | None) -> list[str]:
     """Return the cabal test targets to run.
 
-    An explicit selection (``--targets`` or ``TEST_TARGETS``) is run verbatim;
-    with no selection we run ``all`` test suites in the project.
+    An explicit selection (``--targets`` or ``TEST_TARGETS``) is run verbatim.
+    With no selection we run ``all`` test suites in the project.
     """
     if cli_targets:
         return cli_targets
@@ -75,7 +75,7 @@ def run_for_version(
         text=True,
         check=False,
     ).stdout.strip()
-    # Shared by every target; only the trailing target name differs per run.
+    # Shared by every target. Only the trailing target name differs per run.
     base_cmd = [
         "cabal",
         "test",
@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "version",
         help=(
-            "GHC version to test. Must already be first on PATH; the "
+            "GHC version to test. Must already be first on PATH. The "
             "hls-run-testsuites wrapper arranges this per version."
         ),
     )
@@ -135,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         help=(
             "cabal test targets to run (default: all test suites). "
-            "Overrides TEST_TARGETS; run verbatim."
+            "Overrides TEST_TARGETS. Run verbatim."
         ),
     )
     args = parser.parse_args(argv)
