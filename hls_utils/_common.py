@@ -7,6 +7,7 @@ located by walking up to a ``cabal.project``.
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 # Supported GHC series, matching the compilers the Nix wrapper bakes in and the
@@ -20,6 +21,18 @@ DEFAULT_VERSIONS = ["ghc96", "ghc98", "ghc910", "ghc912", "ghc914"]
 # globs the prefixes to evict them.
 COMPAT_BUILDDIR_PREFIX = "dist-newstyle/compat-"
 TEST_BUILDDIR_PREFIX = "dist-newstyle/test-"
+
+
+def sweep_log_dir(name: str) -> Path:
+    """Return a temp directory for *name*'s per-version sweep logs.
+
+    Logs go to the system temp dir, not the checkout, so a sweep never leaves
+    untracked files behind. Stable per tool name, so all versions of one sweep
+    land together and a re-run overwrites the previous logs instead of piling up.
+    """
+    directory = Path(tempfile.gettempdir()) / "hls-utils-logs" / name
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
 
 
 def find_hls_checkout(start: Path) -> Path | None:

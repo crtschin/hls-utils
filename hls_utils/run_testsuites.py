@@ -32,6 +32,7 @@ from hls_utils._common import (
     TEST_BUILDDIR_PREFIX,
     find_hls_checkout,
     load_ghc_map,
+    sweep_log_dir,
 )
 
 PROJECT_NAME = ".hls-test.project"
@@ -62,16 +63,17 @@ def run_for_version(
     version: str,
     ghc: str,
     hls_dir: Path,
+    logs_dir: Path,
     targets: list[str],
 ) -> bool:
-    """Run *targets* under one GHC, logging to test-logs/<version>.log.
+    """Run *targets* under one GHC, logging to logs_dir/<version>.log.
 
     Each target is its own ``cabal test`` invocation. Requesting several
     sublibrary-dependent suites in one call trips a cabal unit-registration bug
     (Cabal-9341, 'failed to find the installed unit ...-inplace-<sublib>'), so
     they must be run one at a time.
     """
-    log_path = hls_dir / "test-logs" / f"{version}.log"
+    log_path = logs_dir / f"{version}.log"
     print(f"=== {version} -> {log_path} ===")
     numeric = subprocess.run(
         [ghc, "--numeric-version"],
@@ -163,10 +165,10 @@ def main(argv: list[str] | None = None) -> int:
 
     project_path = hls_dir / PROJECT_NAME
     project_path.write_text(PROJECT_CONTENT)
-    (hls_dir / "test-logs").mkdir(parents=True, exist_ok=True)
+    logs_dir = sweep_log_dir("test")
 
     try:
-        ok = run_for_version(version, ghc, hls_dir, targets)
+        ok = run_for_version(version, ghc, hls_dir, logs_dir, targets)
     finally:
         project_path.unlink(missing_ok=True)
     return 0 if ok else 1

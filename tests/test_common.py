@@ -79,3 +79,16 @@ def test_returns_none_when_absent(tmp_path):
 def test_ignores_directory_named_cabal_project(tmp_path):
     (tmp_path / "cabal.project").mkdir()
     assert _common.find_hls_checkout(tmp_path) is None
+
+
+# --- sweep_log_dir ---
+
+
+def test_sweep_log_dir_under_tempdir(tmp_path, monkeypatch):
+    monkeypatch.setattr(_common.tempfile, "gettempdir", lambda: str(tmp_path))
+    d = _common.sweep_log_dir("compat")
+    assert d == tmp_path / "hls-utils-logs" / "compat"
+    assert d.is_dir()
+    # stable per name and idempotent: a re-run reuses the same dir
+    assert _common.sweep_log_dir("compat") == d
+    assert _common.sweep_log_dir("test") == tmp_path / "hls-utils-logs" / "test"

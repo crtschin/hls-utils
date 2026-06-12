@@ -18,6 +18,19 @@ def clean_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def temp_sweep_logs(tmp_path, monkeypatch):
+    """Redirect sweep logs to tmp_path so main() writes nothing to the real tempdir."""
+
+    def fake(name):
+        directory = tmp_path / "sweep-logs" / name
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    for module in ("hls_utils.check_ghc_compat", "hls_utils.run_testsuites"):
+        monkeypatch.setattr(f"{module}.sweep_log_dir", fake)
+
+
 @pytest.fixture
 def valid_checkout(tmp_path, monkeypatch):
     """A tmp dir that looks like an HLS checkout (has cabal.project), cwd'd into."""

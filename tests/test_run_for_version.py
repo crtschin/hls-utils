@@ -8,15 +8,18 @@ GHC = "/nix/store/abc-ghc-9.6.7/bin/ghc"
 
 
 def _make_logs(checkout):
-    # run_for_version opens test-logs/<version>.log directly. main() makes the dir.
-    (checkout / "test-logs").mkdir(parents=True, exist_ok=True)
+    # run_for_version writes <version>.log into the logs dir it is handed; main()
+    # supplies a temp dir, the tests a path under the checkout's tmp_path.
+    logs = checkout / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    return logs
 
 
 def test_one_cabal_test_per_target(valid_checkout, make_recorder, install_run):
-    _make_logs(valid_checkout)
+    logs = _make_logs(valid_checkout)
     rec = install_run(run_testsuites, make_recorder())
     ok = run_testsuites.run_for_version(
-        "ghc96", GHC, valid_checkout, ["lib:a", "lib:b"]
+        "ghc96", GHC, valid_checkout, logs, ["lib:a", "lib:b"]
     )
     assert ok is True
     assert len(rec.calls) == 3  # one probe + one cabal test per target
@@ -24,16 +27,16 @@ def test_one_cabal_test_per_target(valid_checkout, make_recorder, install_run):
 
 
 def test_single_target_two_calls(valid_checkout, make_recorder, install_run):
-    _make_logs(valid_checkout)
+    logs = _make_logs(valid_checkout)
     rec = install_run(run_testsuites, make_recorder())
-    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, ["lib:a"])
+    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, logs, ["lib:a"])
     assert len(rec.cabal_calls) == 1
 
 
 def test_cabal_test_command_shape(valid_checkout, make_recorder, install_run):
-    _make_logs(valid_checkout)
+    logs = _make_logs(valid_checkout)
     rec = install_run(run_testsuites, make_recorder())
-    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, ["lib:a"])
+    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, logs, ["lib:a"])
     cmd = rec.cabal_calls[0]
     assert cmd[:2] == ["cabal", "test"]
     assert cmd[cmd.index("-w") + 1] == GHC
@@ -47,19 +50,19 @@ def test_cabal_test_command_shape(valid_checkout, make_recorder, install_run):
 
 
 def test_returns_false_if_any_target_fails(valid_checkout, make_recorder, install_run):
-    _make_logs(valid_checkout)
+    logs = _make_logs(valid_checkout)
     install_run(run_testsuites, make_recorder(returncodes=[0, 1]))
     ok = run_testsuites.run_for_version(
-        "ghc96", GHC, valid_checkout, ["lib:a", "lib:b"]
+        "ghc96", GHC, valid_checkout, logs, ["lib:a", "lib:b"]
     )
     assert ok is False
 
 
 def test_returns_true_when_all_pass(valid_checkout, make_recorder, install_run):
-    _make_logs(valid_checkout)
+    logs = _make_logs(valid_checkout)
     install_run(run_testsuites, make_recorder(returncodes=[0, 0]))
     ok = run_testsuites.run_for_version(
-        "ghc96", GHC, valid_checkout, ["lib:a", "lib:b"]
+        "ghc96", GHC, valid_checkout, logs, ["lib:a", "lib:b"]
     )
     assert ok is True
 
@@ -67,18 +70,18 @@ def test_returns_true_when_all_pass(valid_checkout, make_recorder, install_run):
 def test_log_header_records_numeric_version(
     valid_checkout, make_recorder, install_run, capsys
 ):
-    _make_logs(valid_checkout)
+    logs = _make_logs(valid_checkout)
     install_run(run_testsuites, make_recorder(probe_version="9.10.3"))
-    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, ["lib:a"])
-    log = (valid_checkout / "test-logs" / "ghc96.log").read_text()
+    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, logs, ["lib:a"])
+    log = (logs / "ghc96.log").read_text()
     assert log.startswith("GHC: 9.10.3")
     assert "OK" in capsys.readouterr().out
 
 
 def test_failure_prints_tail(valid_checkout, make_recorder, install_run, capsys):
-    _make_logs(valid_checkout)
+    logs = _make_logs(valid_checkout)
     install_run(run_testsuites, make_recorder(returncodes=[1]))
-    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, ["lib:a"])
+    run_testsuites.run_for_version("ghc96", GHC, valid_checkout, logs, ["lib:a"])
     assert "FAIL" in capsys.readouterr().out
 
 

@@ -22,6 +22,7 @@ from hls_utils._common import (
     DEFAULT_VERSIONS,
     find_hls_checkout,
     load_ghc_map,
+    sweep_log_dir,
 )
 
 PROJECT_NAME = ".hls-compat.project"
@@ -53,11 +54,12 @@ def run_for_version(
     version: str,
     ghc: str,
     hls_dir: Path,
+    logs_dir: Path,
     targets: list[str],
     extra_flags: list[str],
 ) -> bool:
-    """Build *targets* with one GHC, logging to compat-logs/<version>.log."""
-    log_path = hls_dir / "compat-logs" / f"{version}.log"
+    """Build *targets* with one GHC, logging to logs_dir/<version>.log."""
+    log_path = logs_dir / f"{version}.log"
     print(f"=== {version} -> {log_path} ===")
     numeric = subprocess.run(
         [ghc, "--numeric-version"],
@@ -136,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     project_path = hls_dir / PROJECT_NAME
     project_path.write_text(PROJECT_CONTENT)
-    (hls_dir / "compat-logs").mkdir(parents=True, exist_ok=True)
+    logs_dir = sweep_log_dir("compat")
 
     rc = 0
     try:
@@ -147,7 +149,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"=== {version}: unknown version (have: {known}) ===")
                 rc = 1
                 continue
-            if not run_for_version(version, ghc, hls_dir, targets, extra_flags):
+            if not run_for_version(
+                version, ghc, hls_dir, logs_dir, targets, extra_flags
+            ):
                 rc = 1
     finally:
         project_path.unlink(missing_ok=True)
