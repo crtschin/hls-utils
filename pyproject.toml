@@ -7,12 +7,14 @@ name = "hls-utils"
 version = "0.1.0"
 description = "Nix-packaged utilities for working on Haskell Language Server"
 requires-python = ">=3.13"
+dependencies = ["click"]
 
 [project.scripts]
 hls-check-ghc-compat = "hls_utils.check_ghc_compat:main"
 hls-run-testsuites-core = "hls_utils.run_testsuites:main"
 hls-find-ghc-backports = "hls_utils.ghc_backports:main"
 hls-clear-sweep-caches = "hls_utils.clear_sweep_caches:main"
+hs-gc-caches = "hls_utils.gc_caches:main"
 
 [tool.setuptools]
 packages = ["hls_utils"]

@@ -63,17 +63,18 @@
         };
 
         # The hls_utils Python package: hls-check-ghc-compat, the
-        # hls-run-testsuites-core launcher, hls-find-ghc-backports and
-        # hls-clear-sweep-caches. Self-contained: every supported GHC,
-        # cabal and the C libraries the dependency tree needs are baked into the
-        # wrapper, so the tools run against any HLS checkout with no dev shell.
-        # Run them from inside a checkout.
+        # hls-run-testsuites-core launcher, hls-find-ghc-backports,
+        # hls-clear-sweep-caches and hs-gc-caches. Self-contained: every
+        # supported GHC, cabal and the C libraries the dependency tree needs are
+        # baked into the wrapper, so the tools run against any HLS checkout with
+        # no dev shell. Run the hls-* tools from inside a checkout.
         hls-utils = pkgs.python3Packages.buildPythonApplication {
           pname = "hls-utils";
           version = "0.1.0";
           pyproject = true;
           inherit src;
           build-system = [ pkgs.python3Packages.setuptools ];
+          dependencies = [ pkgs.python3Packages.click ];
           # Run the pytest suite in checkPhase, so `nix build` / `nix flake check`
           # fail if the tools' logic regresses. tests/ ships in src but not in the
           # wheel (the packages allowlist below excludes it).
@@ -93,6 +94,8 @@
               pkgs.curl
               # hls-find-ghc-backports queries a GHC clone via git.
               pkgs.git
+              # hs-gc-caches sizes cache entries with du.
+              pkgs.coreutils
             ])
             "--prefix"
             "LD_LIBRARY_PATH"
@@ -118,7 +121,14 @@
         # `import hls_utils`.
         hls-utils-tests =
           pkgs.runCommandLocal "hls-utils-tests"
-            { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pytest ])) ]; }
+            {
+              nativeBuildInputs = [
+                (pkgs.python3.withPackages (ps: [
+                  ps.click
+                  ps.pytest
+                ]))
+              ];
+            }
             ''
               cp -r ${src}/. .
               chmod -R +w .
@@ -225,8 +235,10 @@
             builtins.attrValues utils
             ++ pre-commit-check.enabledPackages
             ++ [
-              pkgs.python3
-              pkgs.python3Packages.pytest
+              (pkgs.python3.withPackages (ps: [
+                ps.click
+                ps.pytest
+              ]))
             ];
         };
 
@@ -252,6 +264,10 @@
           clear-sweep-caches = {
             type = "app";
             program = "${hls-utils}/bin/hls-clear-sweep-caches";
+          };
+          gc-caches = {
+            type = "app";
+            program = "${hls-utils}/bin/hs-gc-caches";
           };
           default = {
             type = "app";
