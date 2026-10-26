@@ -17,8 +17,8 @@ DEFAULT_VERSIONS = ["ghc96", "ghc98", "ghc910", "ghc912", "ghc914"]
 # Each cross-GHC tool isolates its cabal build under a per-version --builddir
 # beneath dist-newstyle/, prefixed so a sweep never clobbers the developer's own
 # `cabal build` state (which also lives under dist-newstyle/). These builddirs
-# are the caches that make re-runs only recompile local packages; hls-clear-caches
-# globs the prefixes to evict them.
+# are the caches that make re-runs only recompile local packages;
+# hls-clear-sweep-caches globs the prefixes to evict them.
 COMPAT_BUILDDIR_PREFIX = "dist-newstyle/compat-"
 TEST_BUILDDIR_PREFIX = "dist-newstyle/test-"
 

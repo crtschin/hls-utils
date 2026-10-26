@@ -44,7 +44,7 @@ def find_caches(hls_dir: Path) -> list[Path]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="hls-clear-caches",
+        prog="hls-clear-sweep-caches",
         description=(
             "Remove the per-version cabal build caches that hls-check-ghc-compat "
             "and hls-run-testsuites create under dist-newstyle/. Leaves the shared "
