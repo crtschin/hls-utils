@@ -20,8 +20,7 @@ jobs:
           purge-created: 0
           purge-last-accessed: 0
           purge-primary-key: never
-      # Build the two checks directly. `nix flake check` would also build the
-      # launcher package, which CI does not need.
+      # `nix flake check` would also build the launcher and its GHC closure.
       - name: Formatting and lint
         run: nix build -L '.#checks.x86_64-linux.pre-commit-check'
       - name: Tests

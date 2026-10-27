@@ -1,68 +1,16 @@
-r"""Report and reclaim the Haskell caches that nothing else ever collects.
+"""Report and delete the Haskell caches whose owner no longer exists.
 
-Cabal has no ``store gc``, and HLS, ghcide, and hie-bios never collect anything
-at all. Worse, each of them bakes a version into its cache filenames, so every
-GHC or HLS bump silently orphans the previous generation and leaves it on disk
-forever. On a working machine that adds up to tens of gigabytes.
+Cabal, HLS, ghcide and hie-bios never collect their caches, and each one puts a
+version in its cache names. Every GHC or HLS bump orphans the old generation.
 
-Every target here proves liveness by reading a file that names its owner, which
-makes orphan detection exact rather than a guess. One invariant holds
-throughout: **absence of evidence is never evidence of death**. An entry dies
-only when a file was read successfully *and* the owner it names is gone. A
-locked database, a missing ``plan.json``, an unreadable marker: all mean keep.
-That is what makes a wholesale failure (sqlite broken, home directory not
-mounted) fail safe.
+Each target reads a file that names the owner of an entry. An entry is an orphan
+only when that read succeeds and the owner is gone. A locked database, a missing
+plan.json or an unreadable marker keeps the entry, so a wholesale failure keeps
+everything.
 
-\b
-Targets and the evidence each one reads:
-  store          <store>/<unit-id>/ -- a GHC on this machine reports that unit
-                 id as "Project Unit Id" (9.6 and older get plain ghc-<version>)
-  ghcide         *.hiedb -- the mods table's hs_src column holds absolute source
-                 paths; *-inplace-<sha1>/ directories are marked and swept from
-                 the hieFile column of the databases that are still live
-  hie-bios       dist-<name>-<md5>/ -- cache/plan.json names the local packages
-  script-builds  <hash>/scriptlocation -- names the script it was built for
-  logs           logs/ghc-<version>/ -- the version matches a live compiler
-
-``list`` shows every entry with its size, last write, child count, and owner.
-``clean`` removes the orphans, but only with ``--delete``; it reports and exits
-otherwise, and ``--dry-run`` says so explicitly so that a stray ``--delete``
-fails instead of deleting.
-
-Things this deliberately does not do. It never prunes individual packages
-*within* a live cabal store: entries are also registered in that store's
-``package.db``, so removing one means dropping its ``.conf`` and recaching, and
-the only available signal for "unused" is each project's last ``plan.json``,
-which goes stale the moment you switch branch or compiler. It skips
-``*-inplace`` stores by default, since those belong to compilers built in a
-source tree, which no glob can enumerate, so absence of an owner proves nothing.
-It leaves ``logs/build.log`` and ``cabal/packages`` alone, because nothing on
-disk names an owner for either. And it never touches anything inside a live
-``dist-`` directory, where most of the hie-bios footprint legitimately lives.
-
-One place this departs from proven garbage. A ghcide interface directory is
-named after a SHA-1 of the component's whole GHC flag list, which no external
-tool can recompute, so the only evidence available is that no live database
-still reaches it. A project you have not opened since deleting its database
-therefore loses interface files it could have reused. The cost is
-recompilation, never a wrong answer. Two things bound it: any database that
-cannot be read aborts the sweep, since it alone might have named those
-directories, and a running ``haskell-language-server`` puts the whole ghcide
-cache off limits.
-
-Should a whole target come back with nothing owned, that target is left alone
-and the run exits non-zero. Everything there looks orphaned at once, and a
-lookup that broke wholesale, an unmounted home or a ``ghc`` that will not run,
-is far likelier than a cache that is genuinely all garbage.
-
-The GHC version baked into a ``.hiedb`` filename is deliberately unused as a
-kill signal: it is the GHC that ghcide was *compiled against*, not one cabal
-ever invoked, so a locally built HLS would fail the compiler match and lose live
-databases. Only ``logs`` keys on a version, because cabal itself made those
-directories, one per compiler it ran.
-
-Nix users: run ``nix-collect-garbage -d`` first. Every GHC it removes turns its
-store into a fresh orphan.
+We never prune single packages inside a live store. The only signal for an
+unused package is the last plan.json of each project, which goes stale on every
+branch or compiler switch.
 """
 
 from __future__ import annotations
@@ -89,18 +37,14 @@ DU = os.environ.get("DU_BIN") or "du"
 UNIT_ID_RE = re.compile(r'"Project Unit Id"\s*,\s*"([^"]*)"')
 VERSION_RE = re.compile(r'"Project Version"\s*,\s*"([^"]*)"')
 
-# The .cradle.opts sidecar is a shown Haskell record; this is the only field of
-# it worth reading. Both spellings are live on disk, so accept either.
+# The .cradle.opts sidecar holds a shown Haskell record. Both spellings of this
+# field occur on disk.
 COMPONENT_ROOT_RE = re.compile(r'\b(?:cc)?[Cc]omponentRoot = "([^"]*)"')
 
-# ghcide names every cache directory <something>-<sha1 of the component's ghc
-# options>, covering both "<unit-id>-inplace-<hash>" and the "main-<hash>" form
-# it uses for executables (Session/Ghc.hs, cacheDirsUnder).
+# ghcide names an interface directory <unit-id>-inplace-<sha1>, or main-<sha1>
+# for an executable.
 OPTS_HASH_RE = re.compile(r"-[0-9a-f]{40}$")
 
-# Every place a prebuilt GHC normally lands. Compilers built from a source tree
-# are not here by design: their unit id is "<version>-inplace" whatever the
-# tree, so pass --ghc-glob to name them.
 COMPILER_GLOBS = (
     "/nix/store/*-ghc-*/bin/ghc",
     "~/.ghcup/ghc/*/bin/ghc",
@@ -110,31 +54,22 @@ COMPILER_GLOBS = (
 
 INPLACE_SUFFIX = "-inplace"
 
-# Bookkeeping cabal keeps alongside the package entries.
 NON_ENTRY_DIRS = frozenset({"package.db", "incoming"})
 
-# Files ghcide writes beside a database, which must die with it.
 SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal", ".cradle.opts")
 
 PRINCIPAL_SUFFIXES = (".hiedb", ".pkg-exports.sqlite")
 
 TABLES_QUERY = "select name from sqlite_master where type='table'"
 
-# Enough of an argv[0] basename to recognise an editor session holding the
-# ghcide cache open.
 HLS_PROCESS_PREFIXES = ("haskell-language-server", "ghcide", "hls")
 
-# Where the process table lives. A name so the tests need not fake a kernel.
 PROC = Path("/proc")
 
 TARGET_NAMES = ("store", "ghcide", "hie-bios", "script-builds", "logs")
 
-# The two targets that need `ghc --info`, which is worth avoiding otherwise.
 COMPILER_KEYED = frozenset({"store", "logs"})
 
-# What to check first when a whole target came back unowned. The compiler-keyed
-# pair break together on one bad `ghc --info`; the rest break together when the
-# filesystem holding the projects is not mounted.
 REFUSAL_HINTS = {
     "store": "Check --ghc-glob and that ghc runs.",
     "logs": "Check --ghc-glob and that ghc runs.",
@@ -145,8 +80,6 @@ DEFAULT_HINT = "Check that the projects these caches belong to are still mounted
 
 @dataclass
 class Entry:
-    """One reclaimable thing: a store, a database, a build directory."""
-
     target: str
     name: str
     path: Path
@@ -155,9 +88,9 @@ class Entry:
     last_write: float
     entries: int
     owners: list[str] = field(default_factory=list)
-    # Siblings with no independent evidence, removed with this entry.
+    # Sidecar files with no evidence of their own, deleted with this entry.
     extras: list[Path] = field(default_factory=list)
-    # Why liveness could not be judged. Set means never an orphan.
+    # The reason we could not judge the owner. A set reason means never an orphan.
     unreadable: str = ""
 
     @property
@@ -171,8 +104,6 @@ class Entry:
 
 @dataclass(frozen=True)
 class Compiler:
-    """A GHC on this machine, and the two names caches key on."""
-
     unit_id: str
     version: str
     prefix: str
@@ -180,8 +111,6 @@ class Compiler:
 
 @dataclass(frozen=True)
 class Roots:
-    """Where every target lives, once the overrides have been applied."""
-
     store: Path
     cache_home: Path
     ghc_globs: tuple[str, ...]
@@ -205,7 +134,7 @@ class Roots:
 
 
 def default_store() -> Path:
-    """The store cabal would use, honouring the XDG move it made in 3.12."""
+    """The store that cabal uses. Cabal 3.12 moved it to the XDG state directory."""
     env = os.environ.get("CABAL_STORE_DIR")
     if env:
         return Path(env).expanduser()
@@ -219,7 +148,6 @@ def default_cache_home() -> Path:
 
 
 def compiler_paths(extra_globs: tuple[str, ...]) -> list[str]:
-    """Every ghc executable worth interrogating, deduplicated."""
     found: list[str] = []
     for pattern in (*COMPILER_GLOBS, *extra_globs):
         found.extend(glob.glob(os.path.expanduser(pattern)))
@@ -237,8 +165,6 @@ def compiler_paths(extra_globs: tuple[str, ...]) -> list[str]:
 
 
 def probe(ghc: str) -> Compiler | None:
-    """The store name and version this compiler owns, or None if unusable."""
-
     def run(*args: str) -> str | None:
         try:
             proc = subprocess.run(
@@ -259,8 +185,8 @@ def probe(ghc: str) -> Compiler | None:
     if not version:
         return None
     unit = UNIT_ID_RE.search(info)
-    # No "Project Unit Id" field (GHC 9.6 and older): cabal falls back to the
-    # bare compiler id, e.g. ghc-9.6.7.
+    # GHC 9.6 and older report no unit id, and cabal names their store
+    # ghc-<version>.
     return Compiler(
         unit_id=unit.group(1) if unit else f"ghc-{version}",
         version=version,
@@ -269,14 +195,12 @@ def probe(ghc: str) -> Compiler | None:
 
 
 def discover_compilers(extra_globs: tuple[str, ...]) -> list[Compiler]:
-    """Interrogate every GHC on the machine, in parallel."""
     paths = compiler_paths(extra_globs)
     with ThreadPoolExecutor(max_workers=8) as pool:
         return [found for found in pool.map(probe, paths) if found]
 
 
 def owners_by(compilers: list[Compiler], key: str) -> dict[str, list[str]]:
-    """Group compiler install prefixes by unit id or by version."""
     grouped: dict[str, list[str]] = {}
     for compiler in compilers:
         grouped.setdefault(getattr(compiler, key), []).append(compiler.prefix)
@@ -284,7 +208,7 @@ def owners_by(compilers: list[Compiler], key: str) -> dict[str, list[str]]:
 
 
 def du_kib(path: Path) -> int:
-    """Disk usage in KiB. Shelling out to du beats os.walk on a 100k-file tree."""
+    """Disk usage in KiB. du beats os.walk on a tree of 100k files."""
     try:
         proc = subprocess.run(
             [DU, "-sk", str(path)],
@@ -301,7 +225,6 @@ def du_kib(path: Path) -> int:
 def measure(
     target: str, path: Path, root: Path, skip: frozenset[str] = frozenset()
 ) -> Entry:
-    """Size, child count, and the last time anything landed in this entry."""
     last_write = path.stat().st_mtime
     entries = 0
     if path.is_dir():
@@ -330,14 +253,13 @@ def measure_all(
 
 
 def child_dirs(root: Path) -> list[Path]:
-    """Immediate subdirectories, symlinks excluded so no rmtree escapes."""
+    """Subdirectories without symlinks, so that no rmtree escapes the root."""
     if not root.is_dir():
         return []
     return [d for d in sorted(root.iterdir()) if d.is_dir() and not d.is_symlink()]
 
 
 def common_root(paths: Iterable[str]) -> list[str]:
-    """One owner string covering every surviving path, for the table."""
     kept = sorted(set(paths))
     if not kept:
         return []
@@ -348,7 +270,6 @@ def common_root(paths: Iterable[str]) -> list[str]:
 
 
 def collect_store(roots: Roots, compilers: list[Compiler]) -> list[Entry]:
-    """Stores whose owning compiler no longer exists."""
     owners = owners_by(compilers, "unit_id")
     entries = measure_all("store", child_dirs(roots.store), roots.store, NON_ENTRY_DIRS)
     for entry in entries:
@@ -360,18 +281,14 @@ Rows = list[tuple[str, str]]
 
 
 def query_mods(source: str) -> tuple[Rows | None, str]:
-    """Every (hs_src, hieFile) pair, or None and why it could not be read.
-
-    Asking sqlite_master for the table list before touching mods is what
-    separates the two outcomes that matter: a database another process holds
-    raises on that first query, while one ghcide created but never indexed
-    answers with an empty list. The first is no evidence at all; the second is
-    a positive reading that it holds nothing.
-    """
+    """Every (hs_src, hieFile) pair, or None and the reason the read failed."""
     try:
         conn = sqlite3.connect(source, uri=source.startswith("file:"))
     except sqlite3.Error as exc:
         return None, str(exc)
+    # A database that another process holds fails this first query, which is no
+    # evidence. A database that ghcide never indexed has no mods table, which
+    # proves that it holds nothing.
     try:
         if "mods" not in {r[0] for r in conn.execute(TABLES_QUERY)}:
             return [], ""
@@ -383,10 +300,9 @@ def query_mods(source: str) -> tuple[Rows | None, str]:
 
 
 def query_recovered(db: Path) -> tuple[Rows | None, str]:
-    """Replay a crashed session's journal into a copy, leaving the original be.
+    """Query a copy of *db*, leaving the original untouched.
 
-    sqlite will not roll a hot journal back through a read-only open, and one
-    database we cannot read blocks the entire sweep, so the copy earns itself.
+    sqlite rolls back the hot journal of a crashed session only on a writable open.
     """
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -413,7 +329,6 @@ def read_hiedb(db: Path) -> tuple[list[str], list[str], str]:
 
 
 def read_cradle_opts(sidecar: Path) -> tuple[list[str], str]:
-    """The component root an experimental pkg-exports index was built for."""
     try:
         text = sidecar.read_text(errors="replace")
     except OSError as exc:
@@ -445,23 +360,22 @@ def split_sidecars(root: Path) -> tuple[list[Path], dict[Path, list[Path]], list
 
 
 def collect_ghcide(roots: Roots, compilers: list[Compiler]) -> list[Entry]:
-    """Databases, their sidecars, and the interface directories they reach."""
     root = roots.ghcide
     if not root.is_dir():
         return []
     principals, attached, stray = split_sidecars(root)
     entries = measure_all("ghcide", principals, root)
-    # Interface directory name -> the project whose database still reaches it.
     referenced: dict[str, str] = {}
     blind: list[str] = []
-    # Settle this before reading anything: a session holding the cache open
-    # puts every entry off limits, so the reads would only be wasted work, and
-    # the recovery copy in query_recovered could be a gigabyte of it.
+    # A live session puts every entry off limits. Ask first, because the reads
+    # can copy a gigabyte of database for nothing.
     held = session_holding(root)
     for entry in entries:
         entry.extras = attached.get(entry.path, [])
         if held:
             continue
+        # The GHC version in a .hiedb name is the one ghcide was built with, so it
+        # names no owner. A locally built HLS would lose live databases to it.
         if entry.name.endswith(".hiedb"):
             entry.owners, reached, entry.unreadable = read_hiedb(entry.path)
         else:
@@ -485,7 +399,6 @@ def collect_ghcide(roots: Roots, compilers: list[Compiler]) -> list[Entry]:
 
 
 def cache_dir_of(root: Path, hie_file: str) -> str:
-    """The directory under the ghcide root a recorded .hie file sits in."""
     try:
         return Path(os.path.normpath(hie_file)).relative_to(root).parts[0]
     except (ValueError, IndexError):
@@ -493,11 +406,7 @@ def cache_dir_of(root: Path, hie_file: str) -> str:
 
 
 def session_holding(root: Path) -> str:
-    """Why nothing under the ghcide root may be touched, or "" when it may.
-
-    A running session owns every file here, not just the sweep: it holds
-    databases open and writes interface files as it goes.
-    """
+    """The reason to leave the whole ghcide root alone, or "" when none applies."""
     running = hls_running()
     if running is None:
         return f"cannot check for a session holding {root}: no /proc"
@@ -507,12 +416,7 @@ def session_holding(root: Path) -> str:
 def collect_ghcide_caches(
     root: Path, referenced: dict[str, str], blocked: str
 ) -> list[Entry]:
-    """Interface directories, orphaned when no live database names them.
-
-    The directory name ends in a SHA-1 over the component's full GHC flag list,
-    which no external tool can recompute without running the cradle. Marking
-    from the databases is the only evidence available.
-    """
+    """Interface directories, orphaned when no live database names them."""
     dirs = [d for d in child_dirs(root) if OPTS_HASH_RE.search(d.name)]
     entries = measure_all("ghcide", dirs, root)
     for entry in entries:
@@ -538,8 +442,7 @@ def hls_running() -> list[str] | None:
             continue
         if not argv or not argv[0]:
             continue
-        # Nix runs the wrapped binary as .haskell-language-server-9.10.3-unwrapped,
-        # so the leading dot has to go before the prefix means anything.
+        # Nix runs the wrapped binary as .haskell-language-server-9.10.3-unwrapped.
         name = os.path.basename(argv[0].decode("utf-8", "replace")).lstrip(".")
         if name.startswith(HLS_PROCESS_PREFIXES):
             found.add(name)
@@ -547,7 +450,6 @@ def hls_running() -> list[str] | None:
 
 
 def read_plan(dist: Path) -> tuple[list[str], str]:
-    """The local packages a hie-bios build directory was made for."""
     plan = dist / "cache" / "plan.json"
     try:
         data = json.loads(plan.read_text())
@@ -567,10 +469,9 @@ def read_plan(dist: Path) -> tuple[list[str], str]:
 
 
 def collect_hie_bios(roots: Roots, compilers: list[Compiler]) -> list[Entry]:
-    """Cabal build directories whose project has gone.
+    """Build directories whose project is gone, judged by the plan alone.
 
-    The md5 in the directory name is over the absolute cradle work directory,
-    so the readable basename beside it is a hint and never a proof; the plan is.
+    The readable part of the name is a hint. The md5 hashes the cradle work directory.
     """
     root = roots.hie_bios
     dirs = [d for d in child_dirs(root) if d.name.startswith("dist-")]
@@ -581,7 +482,6 @@ def collect_hie_bios(roots: Roots, compilers: list[Compiler]) -> list[Entry]:
 
 
 def collect_script_builds(roots: Roots, compilers: list[Compiler]) -> list[Entry]:
-    """Build directories for `cabal run` scripts that no longer exist."""
     root = roots.script_builds
     entries = measure_all("script-builds", child_dirs(root), root)
     for entry in entries:
@@ -599,11 +499,7 @@ def collect_script_builds(roots: Roots, compilers: list[Compiler]) -> list[Entry
 
 
 def collect_logs(roots: Roots, compilers: list[Compiler]) -> list[Entry]:
-    """Build logs for a compiler that has gone.
-
-    Safe to key on the version here, unlike the .hiedb names, because cabal
-    itself made these directories, one per compiler it actually invoked.
-    """
+    """Logs for a gone compiler. Cabal makes one directory per compiler it ran."""
     root = roots.logs
     owners = owners_by(compilers, "version")
     dirs = [d for d in child_dirs(root) if d.name.startswith("ghc-")]
@@ -623,7 +519,6 @@ COLLECTORS = {
 
 
 def gather(targets: tuple[str, ...], roots: Roots) -> list[Entry]:
-    """Every entry across the chosen targets, sorted small to large."""
     compilers = (
         discover_compilers(roots.ghc_globs) if COMPILER_KEYED & set(targets) else []
     )
@@ -664,7 +559,6 @@ def table(entries: list[Entry], show_owner: bool) -> None:
 
 
 def report_unreadable(entries: list[Entry]) -> None:
-    """Say what was skipped, so a gap in coverage never reads as clean."""
     reasons: dict[str, int] = {}
     for entry in entries:
         if entry.unreadable:
@@ -676,7 +570,6 @@ def report_unreadable(entries: list[Entry]) -> None:
 def resolve_roots(
     store: Path | None, cache_home: Path | None, ghc_globs: tuple[str, ...]
 ) -> Roots:
-    """Apply the overrides, failing loudly when one names nothing."""
     if store is not None and not store.is_dir():
         raise click.ClickException(f"no cabal store at {store}")
     if cache_home is not None and not cache_home.is_dir():
@@ -689,16 +582,14 @@ def resolve_roots(
 
 
 def refusals(entries: list[Entry]) -> dict[str, str]:
-    """Targets where not one entry looked owned, which smells like a bad oracle.
+    """Targets where no judged entry has an owner, which clean leaves alone.
 
-    Everything there looks orphaned at once, and a lookup that broke wholesale
-    is far likelier than a machine that genuinely owns none of it. Leave those
-    targets alone and say so, rather than taking the whole cache with them.
+    When every entry looks orphaned at once, the owner lookup most likely broke.
     """
     blocked: dict[str, str] = {}
     for target in TARGET_NAMES:
-        # Entries with no verdict prove nothing either way, so a target made
-        # entirely of them is quiet rather than suspicious.
+        # Entries with no verdict prove nothing, so a target made only of them
+        # raises no alarm.
         judged = [e for e in entries if e.target == target and not e.unreadable]
         if judged and not any(e.owners for e in judged):
             blocked[target] = (
@@ -733,7 +624,7 @@ def shared_options(command):
         "targets",
         multiple=True,
         type=click.Choice(TARGET_NAMES),
-        help="Cache to act on. Repeatable; defaults to all of them.",
+        help="Cache to act on. Repeatable. Defaults to all of them.",
     )(command)
 
 
@@ -784,8 +675,8 @@ def list_cmd(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Report what would go, remove nothing. Already the default; pass it to "
-    "say so, and to make a stray --delete an error instead of a deletion.",
+    help="Report what would go and remove nothing. This is the default. Passing "
+    "it turns a stray --delete into an error.",
 )
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
 def clean(
@@ -843,7 +734,7 @@ def clean(
 
 
 def remove(doomed: list[Entry], freeable: int, yes: bool) -> None:
-    """Vet every path against its own root, then take them all."""
+    """Validate every path before deleting any."""
     for entry in doomed:
         for path in (entry.path, *entry.extras):
             if path.parent != entry.root or path.is_symlink():

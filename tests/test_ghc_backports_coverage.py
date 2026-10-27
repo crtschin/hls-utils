@@ -1,5 +1,3 @@
-"""Tests for compute_coverage: the pure synthesis from per-commit refs (no git)."""
-
 from hls_utils import ghc_backports as gb
 
 
@@ -13,7 +11,7 @@ def _commit(reason="seed", subject="Fix foo", tags=(), branches=()):
 
 
 def test_backport_first_release_per_series_numeric_min():
-    # Original on master + 9.12/9.14, backport (different SHA) on 9.10.
+    # The original sits on master, 9.12 and 9.14. The backport sits on 9.10.
     data = {
         "aaa": _commit(
             tags=["ghc-9.12.1-release", "ghc-9.14.1-release"],
@@ -30,7 +28,6 @@ def test_backport_first_release_per_series_numeric_min():
         ),
     }
     cov = gb.compute_coverage("aaa", data, include_prereleases=False)["coverage"]
-    # Numeric order, and 9.10's first release is the min patch (9.10.3).
     assert list(cov["released"].items()) == [
         ("9.10", "9.10.3"),
         ("9.12", "9.12.1"),
@@ -66,18 +63,15 @@ def test_prereleases_hidden_by_default_shown_on_flag():
     }
     off = gb.compute_coverage("aaa", data, include_prereleases=False)["coverage"]
     assert "prereleases" not in off
-    # alpha1 and alpha2 are distinct tags, not collapsed.
     on = gb.compute_coverage("aaa", data, include_prereleases=True)["coverage"]
     assert on["prereleases"] == {"9.14": ["ghc-9.14.1-alpha1", "ghc-9.14.1-alpha2"]}
-    # The release series is still excluded from prereleases / kept in released.
     assert on["released"] == {"9.12": "9.12.1"}
 
 
 def test_commit_in_no_ref_is_dropped():
-    # A same-subject match reachable from no branch/tag tells us nothing.
     data = {
         "aaa": _commit(tags=["ghc-9.12.1-release"], branches=["* master"]),
-        "ddd": _commit(reason="subject"),  # no tags, no branches
+        "ddd": _commit(reason="subject"),
     }
     report = gb.compute_coverage("aaa", data, include_prereleases=False)
     assert [c["sha"] for c in report["commits"]] == ["aaa"]

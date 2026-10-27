@@ -1,12 +1,8 @@
-"""Tests for the shared helpers in hls_utils._common."""
-
 import json
 
 import pytest
 
 from hls_utils import _common
-
-# --- load_ghc_map ---
 
 
 def test_no_env_returns_empty():
@@ -55,9 +51,6 @@ def test_malformed_file_raises(tmp_path, monkeypatch):
         _common.load_ghc_map()
 
 
-# --- find_hls_checkout ---
-
-
 def test_finds_cabal_project_in_start(tmp_path):
     (tmp_path / "cabal.project").write_text("")
     assert _common.find_hls_checkout(tmp_path) == tmp_path
@@ -81,14 +74,10 @@ def test_ignores_directory_named_cabal_project(tmp_path):
     assert _common.find_hls_checkout(tmp_path) is None
 
 
-# --- sweep_log_dir ---
-
-
 def test_sweep_log_dir_under_tempdir(tmp_path, monkeypatch):
     monkeypatch.setattr(_common.tempfile, "gettempdir", lambda: str(tmp_path))
     d = _common.sweep_log_dir("compat")
     assert d == tmp_path / "hls-utils-logs" / "compat"
     assert d.is_dir()
-    # stable per name and idempotent: a re-run reuses the same dir
     assert _common.sweep_log_dir("compat") == d
     assert _common.sweep_log_dir("test") == tmp_path / "hls-utils-logs" / "test"

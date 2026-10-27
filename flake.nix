@@ -2,8 +2,8 @@
   description = "Nix-packaged utilities for working on Haskell Language Server";
 
   inputs = {
-    # Pinned to the same revision haskell-language-server's flake uses, so the
-    # GHC patch versions match HLS (and the cabal store / builddirs are shared).
+    # The revision that the haskell-language-server flake pins, so the GHC patch
+    # versions match and both share the cabal store.
     nixpkgs.url = "github:NixOS/nixpkgs/ed142ab1b3a092c4d149245d0c4126a5d7ea00b0";
     flake-utils.url = "github:numtide/flake-utils";
     git-hooks = {
@@ -29,9 +29,7 @@
           };
         };
 
-        # version -> ghc. Shared by the Python launcher (which compiles under
-        # each via `cabal -w`) and the hls-run-testsuites shell wrapper (which
-        # pins each on PATH).
+        # Keep in sync with DEFAULT_VERSIONS in hls_utils/_common.py.
         ghcs = {
           ghc96 = pkgs.haskell.packages.ghc96.ghc;
           ghc98 = pkgs.haskell.packages.ghc98.ghc;
@@ -39,20 +37,16 @@
           ghc912 = pkgs.haskell.packages.ghc912.ghc;
           ghc914 = pkgs.haskell.packages.ghc914.ghc;
         };
-        # version -> ghc binary, handed to the CLI as a JSON file path
-        # (passing the JSON inline trips makeWrapper's argument parsing).
+        # A file, because makeWrapper mangles the JSON when we pass it inline.
         ghcsFile = pkgs.writeText "hls-compat-ghcs.json" (
           builtins.toJSON (pkgs.lib.mapAttrs (_: ghc: "${ghc}/bin/ghc") ghcs)
         );
-        # C libraries the dependency tree links against (e.g. zlib's -lz),
-        # exposed at runtime, link and compile time below.
         cLibs = [
           pkgs.gmp
           pkgs.zlib
           pkgs.ncurses
         ];
 
-        # Shared by the launcher and the test check below, keeping them in sync.
         src = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
@@ -62,12 +56,6 @@
           ];
         };
 
-        # The hls_utils Python package: hls-check-ghc-compat, the
-        # hls-run-testsuites-core launcher, hls-find-ghc-backports,
-        # hls-clear-sweep-caches and hs-gc-caches. Self-contained: every
-        # supported GHC, cabal and the C libraries the dependency tree needs are
-        # baked into the wrapper, so the tools run against any HLS checkout with
-        # no dev shell. Run the hls-* tools from inside a checkout.
         hls-utils = pkgs.python3Packages.buildPythonApplication {
           pname = "hls-utils";
           version = "0.1.0";
@@ -75,15 +63,9 @@
           inherit src;
           build-system = [ pkgs.python3Packages.setuptools ];
           dependencies = [ pkgs.python3Packages.click ];
-          # Run the pytest suite in checkPhase, so `nix build` / `nix flake check`
-          # fail if the tools' logic regresses. tests/ ships in src but not in the
-          # wheel (the packages allowlist below excludes it).
           nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
-          # Bake the runtime tools, GHC map and C libraries into the launcher
-          # so the binary works in a bare HLS checkout. The C libs go on three
-          # paths: LD_LIBRARY_PATH for runtime, LIBRARY_PATH for the linker
-          # (finds -lz) and C_INCLUDE_PATH for compiling cbits (finds zlib.h).
-          # Without the latter two, building a not-yet-cached C-FFI dep fails.
+          # A C-FFI dependency that is not yet in the store needs LIBRARY_PATH to
+          # link (-lz) and C_INCLUDE_PATH to compile its cbits (zlib.h).
           makeWrapperArgs = [
             "--prefix"
             "PATH"
@@ -115,10 +97,7 @@
           ];
         };
 
-        # Runs the hermetic pytest suite without the launcher's 14.7 GiB GHC
-        # closure. The source is copied out of the read-only store so pytest can
-        # write its caches. pyproject's pythonpath = ["."] resolves
-        # `import hls_utils`.
+        # Runs pytest without pulling in the multi-GiB GHC closure of the launcher.
         hls-utils-tests =
           pkgs.runCommandLocal "hls-utils-tests"
             {
@@ -136,12 +115,10 @@
               touch "$out"
             '';
 
-        # User-facing test runner. A plain shell script (NOT a makeWrapper'd
-        # binary) on purpose: each per-version `cabal test` must be launched
-        # from a shell. The spawned test resolves its GHC libdir from PATH, and
-        # that only reaches the test when no makeWrapper sits in the process
-        # ancestry. So we loop here, pin each version's GHC first on PATH, and
-        # call the core launcher (which runs cabal directly).
+        # A plain shell script, because PATH reaches the spawned test only when
+        # no makeWrapper sits in the process ancestry. HLS testdata uses a direct
+        # cradle, so a test finds its GHC libdir through the ghc on PATH. The
+        # wrong GHC fails every session-loading test on an ABI mismatch.
         hls-run-testsuites = pkgs.writeShellScriptBin "hls-run-testsuites" ''
             set -euo pipefail
             versions=""
@@ -178,30 +155,23 @@
             exit "$rc"
         '';
 
-        # The collection. CLIs: hls-check-ghc-compat (Python) and
-        # hls-run-testsuites (shell wrapper over the Python hls-run-testsuites-core).
         utils = {
           inherit hls-utils hls-run-testsuites;
         };
 
-        # Formatting / linting hooks: installed into .git/hooks on `nix develop`
-        # and enforced by `nix flake check`.
         pre-commit-check = git-hooks.lib.${system}.run {
           src = ./.;
           hooks = {
             nixfmt-rfc-style = {
               enable = true;
-              # pkgs.nixfmt-rfc-style is a deprecated alias for pkgs.nixfmt in
-              # this nixpkgs. Use the canonical attr to silence the eval warning.
+              # nixfmt-rfc-style is a deprecated alias in this nixpkgs.
               package = pkgs.nixfmt;
             };
             ruff.enable = true;
             ruff-format.enable = true;
             pyright = {
               enable = true;
-              # Scope to the package, matching pyproject's include = ["hls_utils"].
-              # tests/ is deliberately not type-checked: it leans on pytest, which
-              # isn't on the type-checker's path.
+              # pytest is not on the path of the type checker, so tests/ stays out.
               files = "^hls_utils/";
             };
             shfmt = {
@@ -220,15 +190,11 @@
           default = hls-utils;
         };
 
-        # `nix flake check` runs both: the formatting hooks over the tree
-        # (failing on diffs) and the pytest suite.
         checks = {
           pre-commit-check = pre-commit-check;
           pytest = hls-utils-tests;
         };
 
-        # For developing hls-utils itself (`nix develop`). Entering it installs
-        # this repo's git pre-commit hook. Stays in sync with `utils`.
         devShells.default = pkgs.mkShell {
           inherit (pre-commit-check) shellHook;
           packages =
@@ -242,8 +208,8 @@
             ];
         };
 
-        # Binaries-only shell for layering onto another checkout's .envrc
-        # (`use flake`). No shellHook.
+        # For the .envrc of another checkout. A shellHook here would install our
+        # git hooks into that checkout.
         devShells.tools = pkgs.mkShell {
           packages = builtins.attrValues utils;
         };

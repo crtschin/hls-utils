@@ -1,5 +1,3 @@
-"""Tests for run_testsuites command construction, failure handling, and cleanup."""
-
 import pytest
 
 from hls_utils import run_testsuites
@@ -8,8 +6,6 @@ GHC = "/nix/store/abc-ghc-9.6.7/bin/ghc"
 
 
 def _make_logs(checkout):
-    # run_for_version writes <version>.log into the logs dir it is handed; main()
-    # supplies a temp dir, the tests a path under the checkout's tmp_path.
     logs = checkout / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     return logs
@@ -44,7 +40,7 @@ def test_cabal_test_command_shape(valid_checkout, make_recorder, install_run):
     assert "--builddir=dist-newstyle/test-ghc96" in cmd
     assert "--test-show-details=streaming" in cmd
     assert cmd[cmd.index("--max-backjumps") + 1] == "10000"
-    assert cmd[-1] == "lib:a"  # target is last
+    assert cmd[-1] == "lib:a"
     cabal_kwargs = [k for c, k in rec.calls if c[-1] != "--numeric-version"][0]
     assert cabal_kwargs["cwd"] == valid_checkout
 
@@ -109,9 +105,6 @@ def test_cabal_test_env_keeps_build_paths(
     env = [k for c, k in rec.calls if c[-1] != "--numeric-version"][0]["env"]
     assert env["LIBRARY_PATH"] == "/nix/store/abc-zlib/lib"
     assert env["C_INCLUDE_PATH"] == "/nix/store/abc-zlib-dev/include"
-
-
-# --- main() writes and always cleans up the temporary project file ---
 
 
 def test_main_happy_path_cleans_project_file(

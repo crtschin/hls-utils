@@ -1,18 +1,4 @@
-"""Evict the per-version cabal build caches the cross-GHC sweep tools create.
-
-``hls-check-ghc-compat`` and ``hls-run-testsuites`` each build under their own
-per-version ``--builddir`` beneath ``dist-newstyle/`` (prefixes ``compat-`` and
-``test-``), so re-runs only recompile local packages. Those builddirs are the
-caches, and over a few GHCs they grow large. This removes them to force a clean
-rebuild or reclaim disk.
-
-It deliberately leaves two things alone: the *shared* cabal store (used by every
-cabal invocation, not just these tools, and expensive to repopulate) and the
-developer's own ``dist-newstyle/`` build state (these tools never write there).
-
-The Nix wrapper bakes nothing this tool needs; it is pure filesystem work. Run
-it from inside an HLS checkout, the same place the sweep tools run.
-"""
+"""Delete the per-version builddirs that the sweep tools leave in dist-newstyle/."""
 
 import argparse
 import shutil
@@ -27,17 +13,10 @@ from hls_utils._common import (
 
 
 def find_caches(hls_dir: Path) -> list[Path]:
-    """Per-version builddirs both sweep tools create under *hls_dir*, sorted.
-
-    Globs the ``compat-*`` / ``test-*`` siblings under ``dist-newstyle/`` rather
-    than enumerating known versions, so a builddir left by a custom version name
-    (e.g. ``hls-check-ghc-compat ghc99``) is still found. Only directories match,
-    so an unrelated file sharing the prefix is ignored.
-    """
     caches: list[Path] = []
     for prefix in (COMPAT_BUILDDIR_PREFIX, TEST_BUILDDIR_PREFIX):
         parent = hls_dir / Path(prefix).parent
-        stem = Path(prefix).name  # 'compat-' / 'test-'
+        stem = Path(prefix).name
         caches.extend(p for p in parent.glob(f"{stem}*") if p.is_dir())
     return sorted(caches)
 

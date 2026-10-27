@@ -1,15 +1,4 @@
-"""Cross-GHC compile check for haskell-language-server.
-
-Builds all components against each supported GHC to catch cross-version
-compat-shim breakage, mirroring the CI ``flags`` job (``+pedantic`` /
-``-Werror``).
-
-NB: Each version gets its own ``--builddir``. The shared cabal store caches
-dependencies, so re-runs only recompile the local packages.
-
-The Nix wrapper bakes the GHC compilers, cabal and the needed C libraries into
-the environment. Run it from inside an HLS checkout.
-"""
+"""Build HLS against every supported GHC under +pedantic, like the HLS CI flags job."""
 
 import argparse
 import os
@@ -26,22 +15,16 @@ from hls_utils._common import (
 )
 
 PROJECT_NAME = ".hls-compat.project"
-# Inherit the checkout's cabal.project but skip the developer's
-# cabal.project.local (profiling, dumps). cabal resolves package paths relative
-# to this file, so it must live in the checkout. The name is stable and the
-# content fixed, so cabal does not reconfigure between runs.
+# We write our own project file to skip the cabal.project.local of the developer.
+# cabal resolves package paths relative to this file, so it must live in the
+# checkout.
 PROJECT_CONTENT = "import: cabal.project\n\njobs: 6\n"
 MAX_BACKJUMPS = 10000
 TAIL_LINES = 25
 
 
 def resolve_targets(cli_targets: list[str] | None) -> tuple[list[str], list[str]]:
-    """Return the cabal targets and the extra build flags to use.
-
-    An explicit selection (``--targets`` or ``COMPAT_TARGETS``) is built
-    verbatim, so it may name test suites. With no selection we sweep ``all``
-    local components and disable test suites.
-    """
+    """Cabal targets and extra flags. An explicit selection can name test suites."""
     if cli_targets:
         return cli_targets, []
     env = os.environ.get("COMPAT_TARGETS")
@@ -58,7 +41,6 @@ def run_for_version(
     targets: list[str],
     extra_flags: list[str],
 ) -> bool:
-    """Build *targets* with one GHC, logging to logs_dir/<version>.log."""
     log_path = logs_dir / f"{version}.log"
     print(f"=== {version} -> {log_path} ===")
     numeric = subprocess.run(

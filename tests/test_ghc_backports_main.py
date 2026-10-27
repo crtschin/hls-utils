@@ -1,5 +1,3 @@
-"""Tests for main(): argparse contract and exit codes, with git faked."""
-
 import json
 
 import pytest

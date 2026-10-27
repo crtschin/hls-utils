@@ -1,10 +1,7 @@
-"""Tests for hls-clear-sweep-caches: which builddirs it evicts and what it spares."""
-
 from hls_utils import clear_sweep_caches
 
 
 def _make_builddir(checkout, name):
-    """Create dist-newstyle/<name>/ with a file inside, return the dir path."""
     d = checkout / "dist-newstyle" / name
     d.mkdir(parents=True)
     (d / "cache").write_text("x")
@@ -34,8 +31,8 @@ def test_removes_compat_and_test_spares_others(valid_checkout, capsys):
 
     assert not compat.exists()
     assert not test.exists()
-    assert own_build.exists()  # untouched
-    assert logs.exists()  # logs are output, not caches
+    assert own_build.exists()
+    assert logs.exists()
     out = capsys.readouterr().out
     assert "removed dist-newstyle/compat-ghc96" in out
     assert "removed dist-newstyle/test-ghc912" in out
@@ -51,14 +48,12 @@ def test_dry_run_lists_without_deleting(valid_checkout, capsys):
 
 
 def test_finds_custom_version_builddir(valid_checkout):
-    # Glob, not a fixed version list: a custom-named sweep dir is still evicted.
     custom = _make_builddir(valid_checkout, "compat-ghc99")
     assert clear_sweep_caches.main([]) == 0
     assert not custom.exists()
 
 
 def test_ignores_file_sharing_prefix(valid_checkout):
-    # A plain file named like the prefix must not be treated as a builddir.
     (valid_checkout / "dist-newstyle").mkdir()
     stray = valid_checkout / "dist-newstyle" / "compat-note.txt"
     stray.write_text("not a builddir")

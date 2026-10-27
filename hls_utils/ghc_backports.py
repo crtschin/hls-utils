@@ -1,20 +1,7 @@
-"""Find which released GHC versions contain a change, including backports.
+"""Find the GHC releases that contain a commit, issue or MR, backports included.
 
-Given a commit SHA, an issue (``#NNNN``) or a merge request (``!NNNN``), report
-the GHC release versions that contain that change. The interesting case is
-*backports*: a fix lands on ``master`` then gets cherry-picked (a new SHA) onto
-older release branches and ships in a later patch release.
-
-Resolution is fully offline against a local GHC clone (``--repo`` or
-``$GHC_REPO``): gitlab.haskell.org's REST API is behind bot-protection, so this
-leans on ``git tag/branch --contains`` and ``git log --grep`` instead. A
-treeless clone is enough (commit graph + tags, no blobs)::
-
-    git clone --filter=tree:0 --mirror https://gitlab.haskell.org/ghc/ghc.git
-
-Known limits: a later revert is invisible to ``--contains``. ``!MR`` lookup is
-heuristic (marge-bot rebases drop the MR number from commit text, so prefer the
-SHA). Identical commit subjects can collide.
+We read a local GHC clone, because the gitlab.haskell.org API sits behind bot
+protection.
 """
 
 import argparse
@@ -26,8 +13,6 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-# GHC conventions: release tags ghc-X.Y.Z-release, pre-release ...-alpha/beta/rc,
-# stable branches ghc-X.Y (possibly remote-tracking), plus master.
 RELEASE_TAG_RE = re.compile(r"^ghc-(\d+)\.(\d+)\.(\d+)-release$")
 PRERELEASE_TAG_RE = re.compile(r"^ghc-(\d+)\.(\d+)\.(\d+)-(?:alpha|beta|rc)\d*$")
 STABLE_BRANCH_RE = re.compile(r"^(?:remotes/[^/]+/)?ghc-(\d+)\.(\d+)$")
@@ -39,7 +24,7 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
 class BackportsError(Exception):
-    """A fatal, user-facing error. Maps to exit code 2."""
+    pass
 
 
 class Version(NamedTuple):
@@ -56,14 +41,7 @@ class CommitRefs(NamedTuple):
     branches: list[str]
 
 
-# --- git I/O ---------------------------------------------------------------
-
-
 def git(repo: Path, *args: str) -> str:
-    """Run ``git -C repo args`` and return stripped stdout.
-
-    Raises BackportsError on a non-zero exit (unknown revision, not a repo).
-    """
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
@@ -77,12 +55,10 @@ def git(repo: Path, *args: str) -> str:
 
 
 def git_lines(repo: Path, *args: str) -> list[str]:
-    """git() split into non-empty, stripped lines."""
     return [line.strip() for line in git(repo, *args).splitlines() if line.strip()]
 
 
 def resolve_repo(repo_arg: str | None) -> Path:
-    """Locate the GHC clone: --repo, then $GHC_REPO. Validate it is a git repo."""
     raw = repo_arg or os.environ.get("GHC_REPO")
     if not raw:
         raise BackportsError(
@@ -97,21 +73,15 @@ def resolve_repo(repo_arg: str | None) -> Path:
 
 
 def grep_all(repo: Path, *grep_args: str) -> list[str]:
-    """Full SHAs of commits across all refs matching the given log grep args."""
     return git_lines(repo, "log", "--all", "--format=%H", *grep_args)
 
 
 def subject_of(repo: Path, sha: str) -> str:
-    """The commit's subject line (first line of the message)."""
     return git(repo, "show", "-s", "--format=%s", sha)
 
 
 def cherry_pick_descendants(repo: Path, seeds: set[str]) -> set[str]:
-    """Full SHAs that cherry-picked (``-x``) any seed, transitively.
-
-    ``git cherry-pick -x`` writes ``(cherry picked from commit <full-sha>)``. A
-    re-backport references the previous backport, so iterate to a fixpoint.
-    """
+    """Commits that cherry-picked a seed with ``-x``, following re-backports."""
     known = set(seeds)
     worklist = list(seeds)
     while worklist:
@@ -124,17 +94,16 @@ def cherry_pick_descendants(repo: Path, seeds: set[str]) -> set[str]:
 
 
 def subject_matches(repo: Path, subject: str) -> set[str]:
-    """Full SHAs whose message contains *subject* verbatim (backports without -x)."""
+    """Commits whose message contains *subject*, to catch backports without -x."""
     if not subject:
         return set()
     return set(grep_all(repo, "-F", f"--grep={subject}"))
 
 
 def seed_commits(repo: Path, kind: str, value: str) -> tuple[list[str], str | None]:
-    """Resolve the target to seed full SHAs, plus an optional warning note."""
     if kind == "sha":
         return ([git(repo, "rev-parse", "--verify", f"{value}^{{commit}}")], None)
-    # issue / mr: anchor with non-digit boundaries so #1234 does not match #12345.
+    # The digit boundaries stop #1234 from matching #12345.
     sigil = "#" if kind == "issue" else "!"
     pattern = rf"(^|[^0-9]){sigil}{value}($|[^0-9])"
     shas = grep_all(repo, "-E", f"--grep={pattern}")
@@ -148,19 +117,12 @@ def seed_commits(repo: Path, kind: str, value: str) -> tuple[list[str], str | No
 
 
 def related_commits(repo: Path, kind: str, seeds: list[str]) -> dict[str, str]:
-    """Map each related full SHA to how it was matched.
-
-    Reasons: ``seed`` (the SHA given), ``issue-grep`` / ``mr-grep`` (found via
-    the issue/MR reference), ``provenance`` (cherry-pick ``-x`` trailer),
-    ``subject`` (verbatim subject match, a heuristic fallback).
-    """
     seed_reason = {"sha": "seed", "issue": "issue-grep", "mr": "mr-grep"}[kind]
     reasons: dict[str, str] = {}
     for sha in seeds:
         reasons.setdefault(sha, seed_reason)
-    # For a SHA the backports have *different* SHAs, so expand. An issue ref is
-    # preserved across cherry-picks, so its grep already found them. An MR ref is
-    # not, so expand there too.
+    # A cherry-pick keeps the issue ref, so the issue grep already found the
+    # backports. A backport gets a new SHA and loses the MR ref, so expand those.
     if kind in ("sha", "mr"):
         for sha in cherry_pick_descendants(repo, set(seeds)):
             reasons.setdefault(sha, "provenance")
@@ -171,7 +133,6 @@ def related_commits(repo: Path, kind: str, seeds: list[str]) -> dict[str, str]:
 
 
 def containing_refs(repo: Path, sha: str) -> CommitRefs:
-    """Tags and branches whose history contains *sha*."""
     return CommitRefs(
         tags=git_lines(repo, "tag", "--contains", sha),
         branches=git_lines(repo, "branch", "--all", "--contains", sha),
@@ -179,7 +140,6 @@ def containing_refs(repo: Path, sha: str) -> CommitRefs:
 
 
 def gather(repo: Path, reasons: dict[str, str]) -> dict[str, dict]:
-    """Fetch subject + containing refs for each related SHA (the I/O boundary)."""
     data: dict[str, dict] = {}
     for sha, reason in reasons.items():
         refs = containing_refs(repo, sha)
@@ -192,11 +152,7 @@ def gather(repo: Path, reasons: dict[str, str]) -> dict[str, dict]:
     return data
 
 
-# --- pure parsing / coverage ----------------------------------------------
-
-
 def classify_target(target: str) -> tuple[str, str]:
-    """Classify the target as ('issue'|'mr'|'sha', value). Raise on junk."""
     if m := ISSUE_RE.match(target):
         return ("issue", m.group(1))
     if m := MR_RE.match(target):
@@ -214,8 +170,6 @@ def parse_release_tag(tag: str) -> Version | None:
 
 
 def prerelease_series(tag: str) -> tuple[int, int] | None:
-    """The (major, minor) of a pre-release tag, or None. Keeps the raw tag for
-    display: alpha1 vs alpha2 differ only in the suffix we deliberately drop here."""
     m = PRERELEASE_TAG_RE.match(tag)
     return (int(m[1]), int(m[2])) if m else None
 
@@ -240,7 +194,6 @@ def _series_str(series: tuple[int, int]) -> str:
 def compute_coverage(
     target: str, data: dict[str, dict], include_prereleases: bool
 ) -> dict:
-    """Synthesize the report from each commit's refs. Pure, no git."""
     commits: list[dict] = []
     first_release: dict[tuple[int, int], Version] = {}
     prereleases: dict[tuple[int, int], set[str]] = {}
@@ -257,9 +210,6 @@ def compute_coverage(
                 commit_master = True
             elif (s := parse_branch_series(branch)) is not None:
                 series.add(s)
-        # Skip a commit that contributes nothing we surface, e.g. a same-subject
-        # match reachable only from a wip branch parses to no release/series/master.
-        # Pre-release-only commits count only when we are showing pre-releases.
         if not (
             releases or series or commit_master or (include_prereleases and pretags)
         ):
@@ -300,9 +250,6 @@ def compute_coverage(
             _series_str(k): sorted(prereleases[k]) for k in sorted(prereleases)
         }
     return {"target": target, "commits": commits, "coverage": coverage}
-
-
-# --- output ----------------------------------------------------------------
 
 
 def print_human(report: dict) -> None:

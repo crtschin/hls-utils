@@ -1,9 +1,3 @@
-"""Tests for check_ghc_compat command construction.
-
-Contrast with run_testsuites: compat builds all targets in a SINGLE cabal call,
-not one invocation per target.
-"""
-
 from hls_utils import check_ghc_compat
 
 GHC = "/nix/store/abc-ghc-9.6.7/bin/ghc"
@@ -15,7 +9,7 @@ def test_default_single_build_with_pedantic_and_disable_tests(
     monkeypatch.setenv("HLS_GHCS", f'{{"ghc96": "{GHC}"}}')
     rec = install_run(check_ghc_compat, make_recorder())
     assert check_ghc_compat.main(["ghc96"]) == 0
-    assert len(rec.cabal_calls) == 1  # a single cabal build, no per-target loop
+    assert len(rec.cabal_calls) == 1  # one build for every target
     cmd = rec.cabal_calls[0]
     assert cmd[:2] == ["cabal", "build"]
     assert cmd[cmd.index("--constraint") + 1] == "haskell-language-server +pedantic"
@@ -52,6 +46,6 @@ def test_mixed_known_unknown(
     monkeypatch.setenv("HLS_GHCS", f'{{"ghc96": "{GHC}"}}')
     rec = install_run(check_ghc_compat, make_recorder())
     assert check_ghc_compat.main(["ghc96", "ghcXX"]) == 1
-    assert len(rec.cabal_calls) == 1  # only the known version builds
+    assert len(rec.cabal_calls) == 1
     assert "unknown version" in capsys.readouterr().out
     assert not (valid_checkout / ".hls-compat.project").exists()

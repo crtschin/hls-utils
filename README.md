@@ -1,11 +1,13 @@
 # hls-utils
 
-Nix-packaged utilities for working on [Haskell Language Server](https://github.com/haskell/haskell-language-server).
+Nix-packaged tools for working on
+[Haskell Language Server](https://github.com/haskell/haskell-language-server)
+(HLS).
 
 ## Usage
 
-The intended usage is via something like nix-direnv to bring these utilities
-into scope. Add the `tools` shell to your HLS checkout's `.envrc`:
+Add the `tools` shell to the `.envrc` of your HLS checkout, and direnv puts the
+tools on PATH:
 
 ```sh
 # ~/src/haskell-language-server/.envrc
@@ -14,27 +16,33 @@ use flake github:crtschin/hls-utils#tools
 
 ```sh
 direnv allow
-# now the tools are on PATH inside the checkout
-hls-check-ghc-compat    # cross-GHC compile check (+pedantic / -Werror)
+hls-check-ghc-compat    # compile against every supported GHC under +pedantic
 hls-run-testsuites      # run the test suites against every supported GHC
-hls-find-ghc-backports  # find which released GHC versions contain backports
-hls-clear-sweep-caches  # evict the per-version build caches the above two create
-hs-gc-caches            # reclaim machine-wide Haskell caches whose owner is gone
+hls-find-ghc-backports  # find the GHC releases that ship a change
+hls-clear-sweep-caches  # delete the build caches of the two sweep tools
+hs-gc-caches            # reclaim Haskell caches whose owner is gone
 ```
 
-`hls-check-ghc-compat` and `hls-run-testsuites` default to sweeping every
-supported GHC. Pass versions to narrow it (e.g. `hls-run-testsuites ghc912`) or
-`-t/--targets` to pick cabal targets.
-
-Each keeps its own per-version cabal builddir under `dist-newstyle/`, so re-runs
-only recompile local packages. `hls-clear-sweep-caches` removes those builddirs
-(run it from the checkout; `-n/--dry-run` previews). It leaves the shared cabal
-store and your own `dist-newstyle/` build state alone.
-
-`hs-gc-caches` works machine-wide, not on the checkout. It finds cabal
-store, ghcide, hie-bios, script-builds and log caches whose owning compiler,
-project or script no longer exists. `hs-gc-caches list` reports them, and
-`hs-gc-caches clean --delete` removes them.
-
-Without direnv, run any tool ad hoc, e.g.
+Without direnv, run a tool with `nix run`, e.g.
 `nix run github:crtschin/hls-utils#find-ghc-backports -- <sha>`.
+
+## Sweeping GHC versions
+
+`hls-check-ghc-compat` and `hls-run-testsuites` sweep every supported GHC by
+default. Pass versions to narrow the sweep, e.g. `hls-run-testsuites ghc912`,
+and `-t`/`--targets` to pick cabal targets.
+
+Each tool keeps a cabal builddir per version under `dist-newstyle/`, so a
+re-run recompiles only the local packages. Run `hls-clear-sweep-caches` from
+the checkout to delete those builddirs, and add `-n`/`--dry-run` to preview. It
+leaves the shared cabal store and your own `dist-newstyle/` state alone.
+
+## Reclaiming disk from old caches
+
+`hs-gc-caches` works on the whole machine. It finds the cabal store, ghcide,
+hie-bios, script-builds and log caches whose compiler, project or script is
+gone. `hs-gc-caches list` reports them, and `hs-gc-caches clean --delete`
+removes them.
+
+On Nix, run `nix-collect-garbage -d` first. Every GHC it removes turns its cabal
+store into an orphan.

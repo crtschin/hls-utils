@@ -1,25 +1,7 @@
-"""Cross-GHC test-suite core runner for haskell-language-server.
+"""Run the HLS test suites against one GHC with ``cabal test``.
 
-Runs the project's test suites against a GHC via ``cabal test``, mirroring CI's
-per-version test job. Companion to ``hls-check-ghc-compat``, which only
-type-checks under ``+pedantic``. This actually exercises the suites.
-
-This is the ``hls-run-testsuites-core`` launcher. It assumes the GHC it builds
-and runs against is already first on PATH, which the ``hls-run-testsuites``
-shell wrapper arranges per version before invoking us. The pinning has to happen
-in a shell with no makeWrapper in the process ancestry: HLS testdata uses a
-direct cradle, so a running test resolves its GHC libdir by invoking ``ghc`` off
-PATH, and that PATH only reaches the spawned test under that condition. Building
-under the wrong GHC makes every session-loading test fail on an ABI mismatch.
-
-NB: Each version gets its own ``--builddir``, separate from the compat tool's,
-since the test build is configured differently (tests enabled, no -Werror) and
-sharing a builddir would force cabal to reconfigure on every alternating run.
-The shared cabal store still caches dependencies, so re-runs only recompile the
-local packages.
-
-The Nix wrapper bakes the GHC compilers, cabal and the needed C libraries into
-the environment. Run it from inside an HLS checkout.
+This is hls-run-testsuites-core. It expects that GHC first on PATH, which the
+hls-run-testsuites wrapper in flake.nix arranges.
 """
 
 import argparse
@@ -36,21 +18,13 @@ from hls_utils._common import (
 )
 
 PROJECT_NAME = ".hls-test.project"
-# Inherit the checkout's cabal.project but skip the developer's
-# cabal.project.local (profiling, dumps). cabal resolves package paths relative
-# to this file, so it must live in the checkout. The name is stable and the
-# content fixed, so cabal does not reconfigure between runs.
+# See the comment on check_ghc_compat.PROJECT_CONTENT.
 PROJECT_CONTENT = "import: cabal.project\n\njobs: 6\n"
 MAX_BACKJUMPS = 10000
 TAIL_LINES = 25
 
 
 def resolve_targets(cli_targets: list[str] | None) -> list[str]:
-    """Return the cabal test targets to run.
-
-    An explicit selection (``--targets`` or ``TEST_TARGETS``) is run verbatim.
-    With no selection we run ``all`` test suites in the project.
-    """
     if cli_targets:
         return cli_targets
     env = os.environ.get("TEST_TARGETS")
@@ -66,13 +40,6 @@ def run_for_version(
     logs_dir: Path,
     targets: list[str],
 ) -> bool:
-    """Run *targets* under one GHC, logging to logs_dir/<version>.log.
-
-    Each target is its own ``cabal test`` invocation. Requesting several
-    sublibrary-dependent suites in one call trips a cabal unit-registration bug
-    (Cabal-9341, 'failed to find the installed unit ...-inplace-<sublib>'), so
-    they must be run one at a time.
-    """
     log_path = logs_dir / f"{version}.log"
     print(f"=== {version} -> {log_path} ===")
     numeric = subprocess.run(
@@ -81,7 +48,6 @@ def run_for_version(
         text=True,
         check=False,
     ).stdout.strip()
-    # Shared by every target. Only the trailing target name differs per run.
     base_cmd = [
         "cabal",
         "test",
@@ -91,8 +57,8 @@ def run_for_version(
         "--max-backjumps",
         str(MAX_BACKJUMPS),
         f"--builddir={TEST_BUILDDIR_PREFIX}{version}",
-        # Stream each suite's output into the log so a failure tail is useful.
-        # The default ('failures') hides output for suites cabal deems passing.
+        # Stream every suite's output so the failure tail is useful. The default,
+        # `failures`, hides the output of suites that cabal considers passing.
         "--test-show-details=streaming",
     ]
     # The C libraries that the wrapper puts on LD_LIBRARY_PATH leak into the
@@ -105,6 +71,8 @@ def run_for_version(
     with log_path.open("w") as log:
         log.write(f"GHC: {numeric}\n")
         log.flush()
+        # Several sublibrary-dependent suites in one call trip Cabal-9341, "failed
+        # to find the installed unit ...-inplace-<sublib>".
         for target in targets:
             log.write(f"\n=== cabal test {target} ===\n")
             log.flush()

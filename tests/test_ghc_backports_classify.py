@@ -1,11 +1,7 @@
-"""Tests for the pure target/tag/branch parsing in hls_utils.ghc_backports."""
-
 import pytest
 
 from hls_utils import ghc_backports as gb
 from hls_utils.ghc_backports import BackportsError, Version
-
-# --- classify_target ---
 
 
 @pytest.mark.parametrize(
@@ -28,9 +24,6 @@ def test_classify_target_rejects(target):
         gb.classify_target(target)
 
 
-# --- parse_release_tag ---
-
-
 def test_parse_release_tag():
     assert gb.parse_release_tag("ghc-9.10.2-release") == Version(9, 10, 2)
 
@@ -40,9 +33,6 @@ def test_parse_release_tag():
 )
 def test_parse_release_tag_rejects(tag):
     assert gb.parse_release_tag(tag) is None
-
-
-# --- prerelease_series ---
 
 
 @pytest.mark.parametrize(
@@ -59,9 +49,6 @@ def test_prerelease_series(tag, series):
 
 def test_prerelease_series_rejects_release():
     assert gb.prerelease_series("ghc-9.10.2-release") is None
-
-
-# --- branch parsing ---
 
 
 @pytest.mark.parametrize(
@@ -94,9 +81,6 @@ def test_is_master_branch(line):
 )
 def test_is_master_branch_false(line):
     assert not gb.is_master_branch(line)
-
-
-# --- Version ordering / display ---
 
 
 def test_version_sorts_numerically_not_lexically():

@@ -1,5 +1,3 @@
-"""Tests for the argparse contracts of both CLIs."""
-
 import pytest
 
 from hls_utils import check_ghc_compat, run_testsuites
@@ -18,8 +16,8 @@ def test_rt_rejects_extra_positional():
 
 
 def test_compat_tolerates_zero_versions(tmp_path, monkeypatch):
-    # nargs="*": no argparse error. Reaching the checkout check (returns 2 with
-    # no cabal.project) proves the empty arg list was accepted.
+    # Exit code 2 comes from the missing cabal.project, after argparse accepted
+    # the empty list.
     monkeypatch.chdir(tmp_path)
     assert check_ghc_compat.main([]) == 2
 

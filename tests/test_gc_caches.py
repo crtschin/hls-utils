@@ -1,5 +1,3 @@
-"""Tests for hls_utils.gc_caches."""
-
 from __future__ import annotations
 
 import shutil
@@ -27,7 +25,6 @@ MODS_SCHEMA = (
     "hs_src text, is_real int, hash text)"
 )
 
-# Trimmed `ghc --info`: the real thing is one Haskell tuple per line.
 INFO_WITH_UNIT_ID = """\
  [("GHC extra libraries",""),("Project Unit Id","ghc-9.10.3-4c5b")
  ,("Booter version","9.6.7")
@@ -47,13 +44,7 @@ INFO_WITH_VERSION = """\
 
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
-    """Keep the machine's own GHCs and editor sessions out of every test.
-
-    Without the glob reset the defaults find the real /nix/store compilers, so
-    a store named after one of them looks owned no matter what the test set up.
-    Without the hls_running stub the ghcide sweep tests would fail for anyone
-    running this suite with an editor open.
-    """
+    """Keep the GHCs and editor sessions of this machine out of every test."""
     monkeypatch.setattr(gc_caches, "COMPILER_GLOBS", ())
     monkeypatch.setattr(gc_caches, "hls_running", list)
     monkeypatch.delenv("HIE_BIOS_CACHE_DIR", raising=False)
@@ -70,10 +61,7 @@ def cache(tmp_path) -> Path:
 
 
 def fake_ghc(path: Path, info: str, version: str) -> Path:
-    """A stand-in ghc that answers --info and --numeric-version.
-
-    Uses only shell builtins: PATH is empty under the isolated fixture.
-    """
+    """A stand-in ghc in shell builtins alone, since PATH is empty in these tests."""
     path.parent.mkdir(parents=True, exist_ok=True)
     quoted = info.replace("'", "'\\''")
     path.write_text(
@@ -89,7 +77,6 @@ def fake_ghc(path: Path, info: str, version: str) -> Path:
 
 
 def make_store(root: Path, names: list[str]) -> Path:
-    """A store with one package entry and a package.db per compiler."""
     store = root / "store"
     for name in names:
         (store / name / "package.db").mkdir(parents=True)
@@ -100,7 +87,6 @@ def make_store(root: Path, names: list[str]) -> Path:
 def make_hiedb(
     path: Path, mods: list[tuple[str, str]], *, indexed: bool = True
 ) -> Path:
-    """A hiedb with ghcide's real mods schema, or one ghcide never indexed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     if indexed:
@@ -114,12 +100,7 @@ def make_hiedb(
 
 
 def make_live_db(root: Path, tmp_path: Path) -> Path:
-    """A database a real project still owns.
-
-    Nearly every deletion test needs one: the interlock refuses a target where
-    not a single entry looked owned, on the grounds that a lookup which broke
-    wholesale is likelier than a cache that is wholly garbage.
-    """
+    """A database that a live project owns. Without one, clean refuses the target."""
     src = tmp_path / "alive" / "Main.hs"
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("main = pure ()")
@@ -127,7 +108,6 @@ def make_live_db(root: Path, tmp_path: Path) -> Path:
 
 
 def make_cache_dir(root: Path, name: str) -> Path:
-    """One of ghcide's <unit-id>-inplace-<sha1> interface directories."""
     path = root / name
     path.mkdir(parents=True)
     (path / "Main.hie").write_text("hie")
@@ -135,7 +115,6 @@ def make_cache_dir(root: Path, name: str) -> Path:
 
 
 def make_dist(root: Path, name: str, srcs: list[str] | None) -> Path:
-    """A hie-bios build directory, optionally with the plan that owns it."""
     dist = root / name
     (dist / "cache").mkdir(parents=True)
     (dist / "build").mkdir()
@@ -165,7 +144,6 @@ def make_script_build(root: Path, name: str, script: str | None) -> Path:
 
 
 def run(store: Path, ghc_bin: Path | None, *args: str):
-    """Drive a store test, with the other targets pointed at an empty cache."""
     globs = ["--ghc-glob", str(ghc_bin)] if ghc_bin else []
     return CliRunner().invoke(
         cli,
@@ -196,7 +174,6 @@ def test_probe_reads_project_unit_id(tmp_path):
 
 
 def test_probe_prefers_project_version_over_a_second_call(tmp_path):
-    # --info already carries the version, so --numeric-version is only a net.
     ghc = fake_ghc(tmp_path / "bin/ghc", INFO_WITH_VERSION, "wrong")
     found = probe(str(ghc))
     assert found is not None
@@ -204,7 +181,6 @@ def test_probe_prefers_project_version_over_a_second_call(tmp_path):
 
 
 def test_probe_falls_back_to_compiler_id(tmp_path):
-    # GHC 9.6 and older omit the field; cabal names the store ghc-<version>.
     ghc = fake_ghc(tmp_path / "bin/ghc", INFO_WITHOUT_UNIT_ID, "9.6.7")
     found = probe(str(ghc))
     assert found is not None
@@ -257,7 +233,6 @@ def test_clean_explicit_dry_run_keeps_everything(tmp_path):
 
 
 def test_clean_rejects_dry_run_with_delete(tmp_path):
-    # The point of the flag: a stray --delete errors instead of deleting.
     store = make_store(tmp_path, ["ghc-9.10.3-4c5b", "ghc-9.8.4-dead"])
     ghc = fake_ghc(tmp_path / "bin/ghc", INFO_WITH_UNIT_ID, "9.10.3")
     result = run(store, ghc, "clean", "--dry-run", "--delete", "--yes")
@@ -289,7 +264,6 @@ def test_clean_skips_inplace_by_default(tmp_path):
 
 
 def test_clean_refuses_when_no_compiler_matches(tmp_path):
-    # A broken ghc lookup would otherwise mark the entire store as garbage.
     store = make_store(tmp_path, ["ghc-9.10.3-4c5b"])
     result = run(store, None, "clean", "--delete", "--yes")
     assert result.exit_code != 0
@@ -315,12 +289,11 @@ def test_scan_counts_entries_excluding_bookkeeping(tmp_path):
     ghc = fake_ghc(tmp_path / "bin/ghc", INFO_WITH_UNIT_ID, "9.10.3")
     result = run(store, ghc, "list")
     assert result.exit_code == 0, result.output
-    # package.db and incoming do not count; the one package entry does.
+    # package.db and incoming do not count as entries.
     assert result.output.split("\n")[0].split()[3] == "1"
 
 
 def test_multiple_owners_are_counted(tmp_path):
-    """Two compilers reporting the same unit id both own that store."""
     store = make_store(tmp_path, ["ghc-9.10.3-4c5b"])
     fake_ghc(tmp_path / "a/bin/ghc", INFO_WITH_UNIT_ID, "9.10.3")
     fake_ghc(tmp_path / "b/bin/ghc", INFO_WITH_UNIT_ID, "9.10.3")
@@ -362,7 +335,6 @@ def test_ghcide_drops_database_naming_gone_sources(tmp_path, cache):
 
 
 def test_ghcide_drops_database_ghcide_never_indexed(tmp_path, cache):
-    # No mods table at all: a positive reading that it holds nothing.
     root = cache / "ghcide"
     make_live_db(root, tmp_path)
     db = make_hiedb(root / "cc-extra-dir-1-9.10.3-2.hiedb", [], indexed=False)
@@ -372,12 +344,7 @@ def test_ghcide_drops_database_ghcide_never_indexed(tmp_path, cache):
 
 
 def test_query_recovered_reads_without_touching_the_original(tmp_path):
-    """The copy the journal replay happens in, exercised on a healthy database.
-
-    Synthesising a hot journal that sqlite accepts is not worth the fixture;
-    what this pins down is that the copy carries the siblings across, answers
-    with the same rows, and leaves every original file exactly as it was.
-    """
+    """Uses a healthy database, since sqlite rejects a hand-made hot journal."""
     db = make_hiedb(tmp_path / "ff-proj-9.10.3-2.hiedb", [("/hie/Main.hie", "/a.hs")])
     journal = db.with_name(db.name + "-journal")
     journal.write_bytes(b"\0" * 512)
@@ -418,7 +385,6 @@ def test_ghcide_sweeps_cache_dirs_no_live_database_reaches(tmp_path, cache):
 
 
 def test_ghcide_sweep_blocked_by_an_unreadable_database(tmp_path, cache):
-    """A database we cannot read may be the only thing reaching a directory."""
     root = cache / "ghcide"
     make_live_db(root, tmp_path)
     orphan = "proj-1.0-inplace-" + "b" * 40
@@ -429,12 +395,10 @@ def test_ghcide_sweep_blocked_by_an_unreadable_database(tmp_path, cache):
     result = run_target(cache, "ghcide", "clean", "--delete", "--yes")
     assert result.exit_code == 0, result.output
     assert (root / orphan).is_dir()
-    # The dead database still goes: its own evidence is intact.
     assert not dead.exists()
 
 
 def test_hls_running_sees_through_the_nix_wrapper(monkeypatch, tmp_path):
-    """Nix execs .haskell-language-server-9.10.3-unwrapped, dot and all."""
     proc = tmp_path / "proc"
     (proc / "77258").mkdir(parents=True)
     (proc / "77258" / "cmdline").write_bytes(
@@ -451,7 +415,6 @@ def test_hls_running_none_without_proc(monkeypatch, tmp_path):
 
 
 def test_ghcide_holds_everything_while_hls_runs(tmp_path, cache, monkeypatch):
-    """A live session owns the whole directory, not only the sweep set."""
     monkeypatch.setattr(gc_caches, "hls_running", lambda: ["haskell-language-server"])
     root = cache / "ghcide"
     orphan = "proj-1.0-inplace-" + "b" * 40
@@ -509,7 +472,6 @@ def test_ghcide_pkg_exports_owned_by_its_cradle_opts(tmp_path, cache):
 def test_hie_bios_keeps_dist_whose_plan_still_resolves(tmp_path, cache):
     project = tmp_path / "proj"
     project.mkdir()
-    # Cabal writes /./ segments into plan.json; they must normalise away.
     dist = make_dist(cache / "hie-bios", "dist-proj-" + "a" * 32, [f"{project}/./."])
     result = run_target(cache, "hie-bios", "clean", "--delete", "--yes")
     assert result.exit_code == 0, result.output
@@ -579,7 +541,6 @@ def test_logs_die_with_their_compiler(tmp_path, cache):
     assert result.exit_code == 0, result.output
     assert (root / "ghc-9.10.3").is_dir()
     assert not (root / "ghc-9.8.4").exists()
-    # Nothing on disk names an owner for build.log, so it is never an entry.
     assert (root / "build.log").exists()
     assert "build.log" not in result.output
 
