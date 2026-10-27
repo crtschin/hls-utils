@@ -95,6 +95,12 @@ def run_for_version(
         # The default ('failures') hides output for suites cabal deems passing.
         "--test-show-details=streaming",
     ]
+    # The C libraries that the wrapper puts on LD_LIBRARY_PATH leak into the
+    # `ghc` that a cradle spawns and break the session load. Every test that
+    # needs a cradle then fails with `Rule Failed: GetParsedModuleWithComments`.
+    # A C-FFI dependency needs LIBRARY_PATH and C_INCLUDE_PATH to build, so
+    # those two stay.
+    env = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
     ok = True
     with log_path.open("w") as log:
         log.write(f"GHC: {numeric}\n")
@@ -105,6 +111,7 @@ def run_for_version(
             result = subprocess.run(
                 [*base_cmd, target],
                 cwd=hls_dir,
+                env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 check=False,

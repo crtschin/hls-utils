@@ -85,6 +85,32 @@ def test_failure_prints_tail(valid_checkout, make_recorder, install_run, capsys)
     assert "FAIL" in capsys.readouterr().out
 
 
+def test_cabal_test_env_drops_ld_library_path(
+    valid_checkout, make_recorder, install_run, monkeypatch
+):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/nix/store/abc-zlib/lib")
+    rec = install_run(run_testsuites, make_recorder())
+    run_testsuites.run_for_version(
+        "ghc96", GHC, valid_checkout, _make_logs(valid_checkout), ["lib:a"]
+    )
+    kwargs = [k for c, k in rec.calls if c[-1] != "--numeric-version"][0]
+    assert "LD_LIBRARY_PATH" not in kwargs["env"]
+
+
+def test_cabal_test_env_keeps_build_paths(
+    valid_checkout, make_recorder, install_run, monkeypatch
+):
+    monkeypatch.setenv("LIBRARY_PATH", "/nix/store/abc-zlib/lib")
+    monkeypatch.setenv("C_INCLUDE_PATH", "/nix/store/abc-zlib-dev/include")
+    rec = install_run(run_testsuites, make_recorder())
+    run_testsuites.run_for_version(
+        "ghc96", GHC, valid_checkout, _make_logs(valid_checkout), ["lib:a"]
+    )
+    env = [k for c, k in rec.calls if c[-1] != "--numeric-version"][0]["env"]
+    assert env["LIBRARY_PATH"] == "/nix/store/abc-zlib/lib"
+    assert env["C_INCLUDE_PATH"] == "/nix/store/abc-zlib-dev/include"
+
+
 # --- main() writes and always cleans up the temporary project file ---
 
 
