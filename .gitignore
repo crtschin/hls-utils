@@ -5,6 +5,8 @@
 /result
 /result-*
 
+dist-newstyle/
+
 # Python build / tool artifacts.
 __pycache__/
 *.egg-info/
