@@ -17,10 +17,53 @@ let
 
   # cabal2nix drops these components, so their dependencies never enter the
   # build.
-  cabal2nixFlags = lib.concatMapStringsSep " " (f: "--flag=-${f}") [
+  offAlways = [
     "test-exe"
     "ghcide-bench"
     "plugin-tutorial"
+  ];
+
+  # These plugins need a 9.12 ghc-lib-parser, and none builds against the
+  # base 4.22 that GHC 9.14 ships.
+  offOnGhc914 = [
+    "fourmolu"
+    "ormolu"
+    "hlint"
+    "stylishHaskell"
+  ];
+
+  mkFlags = lib.concatMapStringsSep " " (f: "--flag=-${f}");
+
+  # nixpkgs hasn't raised their bounds for base 4.22, containers 0.8,
+  # template-haskell 2.24 or tagged 0.8.10. We only jailbreak on 9.14, as an
+  # override loses the binary cache hit on every other GHC.
+  jailbreakOnGhc914 = [
+    "binary-instances"
+    "constraints-extras"
+    "dec"
+    "dependent-map"
+    "ghc-trace-events"
+    "hie-compat"
+    "lucid"
+    "lukko"
+    "singleton-bool"
+    "string-interpolate"
+    # Only lsp-types' suite uses it, and we can't skip that suite. lsp_2_8_0_0
+    # refers to lsp-types_2_4_0_0 directly, so overriding lsp-types gives two
+    # builds of it and Cabal rejects the mix.
+    "tasty-hspec"
+  ];
+
+  # Their suites pull in rebase or tasty-hspec, which exclude base 4.22. The
+  # suites of enummapset and generic-lens don't compile on 9.14 at all.
+  skipTestsOnGhc914 = [
+    "deferred-folds"
+    "enummapset"
+    "focus"
+    "generic-lens"
+    "primitive-extras"
+    "stm-containers"
+    "stm-hamt"
   ];
 
   # Pins take compose, as an overlay's arguments can't reach haskellLib.
@@ -59,6 +102,27 @@ let
       inherit (haskellPackages.haskell-language-server.scope.pkgs.haskell.lib) compose;
 
       ghcVersion = haskellPackages.ghc.version;
+      ghc914 = lib.versionAtLeast ghcVersion "9.14";
+
+      cabal2nixFlags = mkFlags (offAlways ++ lib.optionals ghc914 offOnGhc914);
+
+      ghc914Fixes =
+        hself: hsuper:
+        lib.optionalAttrs ghc914 (
+          {
+            # nixpkgs pins Cabal-syntax 3.14 for fourmolu and ormolu, and that
+            # version excludes the containers and time of 9.14. With those
+            # plugins off, the compiler's own works.
+            Cabal-syntax = null;
+            Cabal = null;
+            # Jailbreaking 0.7 fails, as its edges clashes with the one that
+            # Data.Tree gained in containers 0.8.
+            algebraic-graphs = hself.algebraic-graphs_0_8;
+          }
+          // lib.genAttrs jailbreakOnGhc914 (name: compose.doJailbreak hsuper.${name})
+          // lib.genAttrs skipTestsOnGhc914 (name: compose.dontCheck hsuper.${name})
+        );
+
       # No cache holds a build of a git checkout, so profiling and haddock only
       # cost time. Tests stay off, as hls-plugin-api's own suite fails.
       lean =
@@ -92,6 +156,7 @@ let
         (haskellPackages.haskell-language-server.overrideScope (
           lib.composeManyExtensions [
             (pins compose)
+            ghc914Fixes
             sources
             overrides
           ]
