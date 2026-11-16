@@ -18,14 +18,14 @@ def test_extra_positional_exits_2():
 
 
 def test_no_repo_returns_2_without_touching_git(make_git_recorder, install_run, capsys):
-    rec = install_run(gb, make_git_recorder(lambda argv: (0, "")))
+    rec = install_run(make_git_recorder(lambda argv: (0, "")))
     assert gb.main(["#1"]) == 2
     assert "GHC_REPO" in capsys.readouterr().err
     assert rec.calls == []  # resolve_repo fails before any git call
 
 
 def test_invalid_repo_returns_2(make_git_recorder, install_run, capsys):
-    rec = install_run(gb, make_git_recorder(lambda argv: (1, "not a git repository")))
+    rec = install_run(make_git_recorder(lambda argv: (1, "not a git repository")))
     assert gb.main(["--repo", "/x", "#1"]) == 2
     assert "error:" in capsys.readouterr().err
     assert rec.calls == [["rev-parse", "--git-dir"]]
@@ -37,7 +37,7 @@ def test_nothing_found_returns_1(make_git_recorder, install_run, capsys):
             return (0, ".git")
         return (0, "")  # the issue grep finds nothing
 
-    install_run(gb, make_git_recorder(responder))
+    install_run(make_git_recorder(responder))
     assert gb.main(["--repo", "/repo", "#999"]) == 1
     assert "no commits found" in capsys.readouterr().err
 
@@ -60,7 +60,7 @@ def _success_responder(argv):
 
 
 def test_success_human_output(make_git_recorder, install_run, capsys):
-    install_run(gb, make_git_recorder(_success_responder))
+    install_run(make_git_recorder(_success_responder))
     assert gb.main(["--repo", "/repo", "aaaaaaa"]) == 0
     out = capsys.readouterr().out
     assert "9.12: 9.12.1+" in out
@@ -68,7 +68,7 @@ def test_success_human_output(make_git_recorder, install_run, capsys):
 
 
 def test_success_json_output(make_git_recorder, install_run, capsys):
-    install_run(gb, make_git_recorder(_success_responder))
+    install_run(make_git_recorder(_success_responder))
     assert gb.main(["--repo", "/repo", "--json", "aaaaaaa"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["coverage"]["released"] == {"9.12": "9.12.1"}

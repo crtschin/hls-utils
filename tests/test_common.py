@@ -4,51 +4,32 @@ import pytest
 
 from hls_utils import _common
 
+# Bound here because the temp_sweep_logs fixture stubs the module attribute out.
+real_sweep_log_dir = _common.sweep_log_dir
 
-def test_no_env_returns_empty():
+
+def test_missing_file_returns_empty(tmp_path):
+    assert _common.load_ghc_map(str(tmp_path / "does-not-exist.json")) == {}
+
+
+def test_unsubstituted_placeholder_returns_empty():
     assert _common.load_ghc_map() == {}
 
 
-def test_empty_inline_returns_empty(monkeypatch):
-    monkeypatch.setenv("HLS_GHCS", "")
-    assert _common.load_ghc_map() == {}
-
-
-def test_inline_json(monkeypatch):
-    monkeypatch.setenv("HLS_GHCS", '{"ghc96": "/p/ghc"}')
-    assert _common.load_ghc_map() == {"ghc96": "/p/ghc"}
-
-
-def test_file_wins_over_inline(tmp_path, monkeypatch):
+def test_keeps_file_order(tmp_path):
     f = tmp_path / "ghcs.json"
-    f.write_text('{"ghc98": "/from/file"}')
-    monkeypatch.setenv("HLS_GHCS_FILE", str(f))
-    monkeypatch.setenv("HLS_GHCS", '{"ghc96": "/from/inline"}')
-    assert _common.load_ghc_map() == {"ghc98": "/from/file"}
+    f.write_text(json.dumps([["ghc96", "/a/ghc"], ["ghc910", "/b/ghc"]]))
+    assert list(_common.load_ghc_map(str(f)).items()) == [
+        ("ghc96", "/a/ghc"),
+        ("ghc910", "/b/ghc"),
+    ]
 
 
-@pytest.mark.parametrize("payload", ["[]", '"x"', "5", "null"])
-def test_non_dict_returns_empty(monkeypatch, payload):
-    monkeypatch.setenv("HLS_GHCS", payload)
-    assert _common.load_ghc_map() == {}
-
-
-def test_coerces_values_to_str(monkeypatch):
-    monkeypatch.setenv("HLS_GHCS", '{"96": 96}')
-    assert _common.load_ghc_map() == {"96": "96"}
-
-
-def test_missing_file_returns_empty(tmp_path, monkeypatch):
-    monkeypatch.setenv("HLS_GHCS_FILE", str(tmp_path / "does-not-exist.json"))
-    assert _common.load_ghc_map() == {}
-
-
-def test_malformed_file_raises(tmp_path, monkeypatch):
+def test_malformed_file_raises(tmp_path):
     f = tmp_path / "bad.json"
     f.write_text("not json {{{")
-    monkeypatch.setenv("HLS_GHCS_FILE", str(f))
     with pytest.raises(json.JSONDecodeError):
-        _common.load_ghc_map()
+        _common.load_ghc_map(str(f))
 
 
 def test_finds_cabal_project_in_start(tmp_path):
@@ -76,8 +57,8 @@ def test_ignores_directory_named_cabal_project(tmp_path):
 
 def test_sweep_log_dir_under_tempdir(tmp_path, monkeypatch):
     monkeypatch.setattr(_common.tempfile, "gettempdir", lambda: str(tmp_path))
-    d = _common.sweep_log_dir("compat")
+    d = real_sweep_log_dir("compat")
     assert d == tmp_path / "hls-utils-logs" / "compat"
     assert d.is_dir()
-    assert _common.sweep_log_dir("compat") == d
-    assert _common.sweep_log_dir("test") == tmp_path / "hls-utils-logs" / "test"
+    assert real_sweep_log_dir("compat") == d
+    assert real_sweep_log_dir("test") == tmp_path / "hls-utils-logs" / "test"

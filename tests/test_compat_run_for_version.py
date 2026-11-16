@@ -4,10 +4,10 @@ GHC = "/nix/store/abc-ghc-9.6.7/bin/ghc"
 
 
 def test_default_single_build_with_pedantic_and_disable_tests(
-    valid_checkout, monkeypatch, make_recorder, install_run
+    set_ghcs, valid_checkout, monkeypatch, make_recorder, install_run
 ):
-    monkeypatch.setenv("HLS_GHCS", f'{{"ghc96": "{GHC}"}}')
-    rec = install_run(check_ghc_compat, make_recorder())
+    set_ghcs({"ghc96": GHC})
+    rec = install_run(make_recorder())
     assert check_ghc_compat.main(["ghc96"]) == 0
     assert len(rec.cabal_calls) == 1  # one build for every target
     cmd = rec.cabal_calls[0]
@@ -20,10 +20,10 @@ def test_default_single_build_with_pedantic_and_disable_tests(
 
 
 def test_explicit_targets_drop_disable_tests(
-    valid_checkout, monkeypatch, make_recorder, install_run
+    set_ghcs, valid_checkout, monkeypatch, make_recorder, install_run
 ):
-    monkeypatch.setenv("HLS_GHCS", f'{{"ghc96": "{GHC}"}}')
-    rec = install_run(check_ghc_compat, make_recorder())
+    set_ghcs({"ghc96": GHC})
+    rec = install_run(make_recorder())
     assert check_ghc_compat.main(["ghc96", "-t", "x", "y"]) == 0
     assert len(rec.cabal_calls) == 1
     cmd = rec.cabal_calls[0]
@@ -32,19 +32,19 @@ def test_explicit_targets_drop_disable_tests(
 
 
 def test_multi_version_runs_all_and_accumulates_failure(
-    valid_checkout, monkeypatch, make_recorder, install_run
+    set_ghcs, valid_checkout, monkeypatch, make_recorder, install_run
 ):
-    monkeypatch.setenv("HLS_GHCS", f'{{"ghc96": "{GHC}", "ghc98": "{GHC}"}}')
-    rec = install_run(check_ghc_compat, make_recorder(returncodes=[1, 0]))
+    set_ghcs({"ghc96": GHC, "ghc98": GHC})
+    rec = install_run(make_recorder(returncodes=[1, 0]))
     assert check_ghc_compat.main(["ghc96", "ghc98"]) == 1
     assert len(rec.cabal_calls) == 2  # both versions build despite the first failing
 
 
 def test_mixed_known_unknown(
-    valid_checkout, monkeypatch, make_recorder, install_run, capsys
+    set_ghcs, valid_checkout, monkeypatch, make_recorder, install_run, capsys
 ):
-    monkeypatch.setenv("HLS_GHCS", f'{{"ghc96": "{GHC}"}}')
-    rec = install_run(check_ghc_compat, make_recorder())
+    set_ghcs({"ghc96": GHC})
+    rec = install_run(make_recorder())
     assert check_ghc_compat.main(["ghc96", "ghcXX"]) == 1
     assert len(rec.cabal_calls) == 1
     assert "unknown version" in capsys.readouterr().out

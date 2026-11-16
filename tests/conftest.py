@@ -1,9 +1,13 @@
 """Fixtures for a hermetic suite. No test runs a real cabal, GHC or git."""
 
+import subprocess
+
 import pytest
 
+from hls_utils import _common
+
 # Add every env var that the tools read, or it leaks in from the environment.
-_ENV_VARS = ("HLS_GHCS", "HLS_GHCS_FILE", "TEST_TARGETS", "COMPAT_TARGETS", "GHC_REPO")
+_ENV_VARS = ("TEST_TARGETS", "COMPAT_TARGETS", "GHC_REPO")
 
 
 @pytest.fixture(autouse=True)
@@ -19,8 +23,15 @@ def temp_sweep_logs(tmp_path, monkeypatch):
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    for module in ("hls_utils.check_ghc_compat", "hls_utils.run_testsuites"):
-        monkeypatch.setattr(f"{module}.sweep_log_dir", fake)
+    monkeypatch.setattr(_common, "sweep_log_dir", fake)
+
+
+@pytest.fixture
+def set_ghcs(monkeypatch):
+    def _set(ghcs: dict[str, str]):
+        monkeypatch.setattr(_common, "load_ghc_map", lambda: ghcs)
+
+    return _set
 
 
 @pytest.fixture
@@ -88,8 +99,8 @@ def make_git_recorder():
 
 @pytest.fixture
 def install_run(monkeypatch):
-    def _install(module, recorder):
-        monkeypatch.setattr(module.subprocess, "run", recorder)
+    def _install(recorder):
+        monkeypatch.setattr(subprocess, "run", recorder)
         return recorder
 
     return _install

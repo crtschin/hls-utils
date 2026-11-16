@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import shutil
 import sqlite3
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
 from hls_utils import gc_caches
 from hls_utils.gc_caches import (
-    cli,
     default_store,
     # Bound here because the isolated fixture stubs the module attribute out.
     hls_running,
     human,
+    main,
     probe,
 )
 
@@ -52,7 +54,7 @@ def isolated(monkeypatch, tmp_path):
     empty.mkdir()
     (tmp_path / "cache").mkdir()
     monkeypatch.setenv("PATH", str(empty))
-    monkeypatch.setenv("DU_BIN", DU_PATH)
+    monkeypatch.setattr(gc_caches, "DU", DU_PATH)
 
 
 @pytest.fixture
@@ -143,10 +145,31 @@ def make_script_build(root: Path, name: str, script: str | None) -> Path:
     return build
 
 
+@dataclass
+class Result:
+    exit_code: int
+    output: str
+
+
+def invoke(argv: list[str]) -> Result:
+    """Run the CLI with stdout and stderr captured together."""
+    out = io.StringIO()
+    code = 0
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        try:
+            main(argv)
+        except SystemExit as exc:
+            if isinstance(exc.code, str):
+                print(exc.code, file=out)
+                code = 1
+            else:
+                code = exc.code or 0
+    return Result(code, out.getvalue())
+
+
 def run(store: Path, ghc_bin: Path | None, *args: str):
     globs = ["--ghc-glob", str(ghc_bin)] if ghc_bin else []
-    return CliRunner().invoke(
-        cli,
+    return invoke(
         [
             args[0],
             "--store",
@@ -160,9 +183,7 @@ def run(store: Path, ghc_bin: Path | None, *args: str):
 
 
 def run_target(cache: Path, target: str, *args: str):
-    return CliRunner().invoke(
-        cli, [args[0], "--cache-home", str(cache), "--target", target, *args[1:]]
-    )
+    return invoke([args[0], "--cache-home", str(cache), "--target", target, *args[1:]])
 
 
 def test_probe_reads_project_unit_id(tmp_path):
@@ -297,8 +318,7 @@ def test_multiple_owners_are_counted(tmp_path):
     store = make_store(tmp_path, ["ghc-9.10.3-4c5b"])
     fake_ghc(tmp_path / "a/bin/ghc", INFO_WITH_UNIT_ID, "9.10.3")
     fake_ghc(tmp_path / "b/bin/ghc", INFO_WITH_UNIT_ID, "9.10.3")
-    result = CliRunner().invoke(
-        cli,
+    result = invoke(
         [
             "list",
             "--target",
@@ -524,8 +544,7 @@ def test_logs_die_with_their_compiler(tmp_path, cache):
         (root / name / "pkg-0.1.log").write_text("built")
     (root / "build.log").write_text("append only")
     ghc = fake_ghc(tmp_path / "bin/ghc", INFO_WITH_UNIT_ID, "9.10.3")
-    result = CliRunner().invoke(
-        cli,
+    result = invoke(
         [
             "clean",
             "--cache-home",
@@ -557,7 +576,7 @@ def test_logs_refuse_when_no_compiler_matches(cache):
 def test_target_column_appears_only_across_targets(tmp_path, cache):
     make_dist(cache / "hie-bios", "dist-gone-" + "b" * 32, [str(tmp_path / "vanished")])
     make_script_build(cache / "cabal" / "script-builds", "c" * 52, str(tmp_path / "no"))
-    both = CliRunner().invoke(cli, ["list", "--cache-home", str(cache)])
+    both = invoke(["list", "--cache-home", str(cache)])
     assert both.exit_code == 0, both.output
     assert "[hie-bios]" in both.output
     assert "[script-builds]" in both.output

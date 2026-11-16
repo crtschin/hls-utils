@@ -15,6 +15,7 @@ branch or compiler switch.
 
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import os
@@ -22,6 +23,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -29,10 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-import click
-
-# DU_BIN overrides the du on PATH, for tests.
-DU = os.environ.get("DU_BIN") or "du"
+DU = "du"
 
 UNIT_ID_RE = re.compile(r'"Project Unit Id"\s*,\s*"([^"]*)"')
 VERSION_RE = re.compile(r'"Project Version"\s*,\s*"([^"]*)"')
@@ -555,7 +554,7 @@ def table(entries: list[Entry], show_owner: bool) -> None:
                 owner = "?"
             extra = len(entry.owners) - 1
             line += f"  {owner}" + (f" (+{extra})" if extra > 0 else "")
-        click.echo(line)
+        print(line)
 
 
 def report_unreadable(entries: list[Entry]) -> None:
@@ -564,16 +563,16 @@ def report_unreadable(entries: list[Entry]) -> None:
         if entry.unreadable:
             reasons[entry.unreadable] = reasons.get(entry.unreadable, 0) + 1
     for reason, count in sorted(reasons.items()):
-        click.echo(f"kept {count} entries with no verdict: {reason}", err=True)
+        print(f"kept {count} entries with no verdict: {reason}", file=sys.stderr)
 
 
 def resolve_roots(
     store: Path | None, cache_home: Path | None, ghc_globs: tuple[str, ...]
 ) -> Roots:
     if store is not None and not store.is_dir():
-        raise click.ClickException(f"no cabal store at {store}")
+        raise SystemExit(f"error: no cabal store at {store}")
     if cache_home is not None and not cache_home.is_dir():
-        raise click.ClickException(f"no cache directory at {cache_home}")
+        raise SystemExit(f"error: no cache directory at {cache_home}")
     return Roots(
         store=store or default_store(),
         cache_home=cache_home or default_cache_home(),
@@ -599,136 +598,83 @@ def refusals(entries: list[Entry]) -> dict[str, str]:
     return blocked
 
 
-def shared_options(command):
-    command = click.option(
+def add_shared_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--target",
+        dest="targets",
+        action="append",
+        choices=TARGET_NAMES,
+        help="Cache to act on. Repeatable. Defaults to all of them.",
+    )
+    parser.add_argument(
+        "--store",
+        type=Path,
+        help="Cabal store root. Defaults to $CABAL_STORE_DIR, else the XDG path.",
+    )
+    parser.add_argument(
+        "--cache-home",
+        type=Path,
+        help="Cache root for every target but the store. Defaults to "
+        "$XDG_CACHE_HOME, else ~/.cache.",
+    )
+    parser.add_argument(
         "--ghc-glob",
-        "ghc_globs",
-        multiple=True,
+        dest="ghc_globs",
+        action="append",
+        default=[],
         metavar="GLOB",
         help="Extra ghc executables to count as owners, e.g. "
         "'~/src/ghc*/_build/stage1/bin/ghc'. Repeatable.",
-    )(command)
-    command = click.option(
-        "--cache-home",
-        type=click.Path(path_type=Path),
-        help="Cache root for every target but the store. Defaults to "
-        "$XDG_CACHE_HOME, else ~/.cache.",
-    )(command)
-    command = click.option(
-        "--store",
-        type=click.Path(path_type=Path),
-        help="Cabal store root. Defaults to $CABAL_STORE_DIR, else the XDG path.",
-    )(command)
-    return click.option(
-        "--target",
-        "targets",
-        multiple=True,
-        type=click.Choice(TARGET_NAMES),
-        help="Cache to act on. Repeatable. Defaults to all of them.",
-    )(command)
+    )
 
 
-@click.group()
-def cli() -> None:
-    """Inspect and reclaim the Haskell caches nothing else collects."""
-
-
-@cli.command("list")
-@shared_options
-def list_cmd(
-    targets: tuple[str, ...],
-    store: Path | None,
-    cache_home: Path | None,
-    ghc_globs: tuple[str, ...],
-) -> None:
-    """Show every entry: size, last write, child count, owner.
-
-    \b
-    Examples:
-        hs-gc-caches list
-        hs-gc-caches list --target ghcide
-        hs-gc-caches list --ghc-glob '~/personal/ghc*/_build/stage1/bin/ghc'
-    """
-    roots = resolve_roots(store, cache_home, ghc_globs)
-    entries = gather(targets or TARGET_NAMES, roots)
+def list_cmd(args: argparse.Namespace) -> None:
+    roots = resolve_roots(args.store, args.cache_home, tuple(args.ghc_globs))
+    entries = gather(args.targets or TARGET_NAMES, roots)
     table(entries, show_owner=True)
     report_unreadable(entries)
     dead = [e for e in entries if e.orphan and not e.inplace]
     total = sum(e.kib for e in entries)
-    click.echo(f"\n{human(total)} total across {len(entries)} entries.")
+    print(f"\n{human(total)} total across {len(entries)} entries.")
     if dead:
-        click.echo(
+        print(
             f"{human(sum(e.kib for e in dead))} in {len(dead)} orphan(s); "
             "preview with: hs-gc-caches clean --dry-run"
         )
 
 
-@cli.command()
-@shared_options
-@click.option(
-    "--include-inplace",
-    is_flag=True,
-    help="Also treat '*-inplace' stores as orphans. Only safe once you are sure "
-    "no source tree still builds that compiler.",
-)
-@click.option("--delete", is_flag=True, help="Actually remove. Default is a dry run.")
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Report what would go and remove nothing. This is the default. Passing "
-    "it turns a stray --delete into an error.",
-)
-@click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
-def clean(
-    targets: tuple[str, ...],
-    store: Path | None,
-    cache_home: Path | None,
-    ghc_globs: tuple[str, ...],
-    include_inplace: bool,
-    delete: bool,
-    dry_run: bool,
-    yes: bool,
-) -> None:
-    """Remove every entry whose owner no longer exists on this machine.
-
-    \b
-    Examples:
-        hs-gc-caches clean --dry-run
-        hs-gc-caches clean --target ghcide --delete
-    """
-    if dry_run and delete:
-        raise click.UsageError("--dry-run and --delete contradict each other.")
-    roots = resolve_roots(store, cache_home, ghc_globs)
-    entries = gather(targets or TARGET_NAMES, roots)
+def clean(args: argparse.Namespace) -> None:
+    roots = resolve_roots(args.store, args.cache_home, tuple(args.ghc_globs))
+    entries = gather(args.targets or TARGET_NAMES, roots)
     blocked = refusals(entries)
 
     orphans = [e for e in entries if e.orphan and e.target not in blocked]
-    skipped = [] if include_inplace else [e for e in orphans if e.inplace]
+    skipped = [] if args.include_inplace else [e for e in orphans if e.inplace]
     held = {id(e) for e in skipped}
     doomed = [e for e in orphans if id(e) not in held]
     report_unreadable(entries)
     for why in blocked.values():
-        click.echo(why, err=True)
+        print(why, file=sys.stderr)
     if skipped:
-        click.echo(
+        print(
             f"skipping {len(skipped)} in-tree store(s) "
             f"({', '.join(s.name for s in skipped)}); pass --include-inplace to "
             "reclaim them.",
-            err=True,
+            file=sys.stderr,
         )
 
     freeable = sum(e.kib for e in doomed)
     if not doomed:
-        click.echo("nothing to reclaim.")
-    elif not delete:
+        print("nothing to reclaim.")
+    elif not args.delete:
         table(doomed, show_owner=False)
-        click.echo(
+        print(
             f"\n{human(freeable)} reclaimable from {len(doomed)} entries. "
             "Dry run; pass --delete to remove."
         )
     else:
         table(doomed, show_owner=False)
-        remove(doomed, freeable, yes)
+        remove(doomed, freeable, args.yes)
     if blocked:
         raise SystemExit(1)
 
@@ -738,12 +684,13 @@ def remove(doomed: list[Entry], freeable: int, yes: bool) -> None:
     for entry in doomed:
         for path in (entry.path, *entry.extras):
             if path.parent != entry.root or path.is_symlink():
-                raise click.ClickException(f"refusing to delete {path}")
+                raise SystemExit(f"error: refusing to delete {path}")
     if not yes:
-        click.confirm(
-            f"\ndelete {len(doomed)} entries, freeing {human(freeable)}?",
-            abort=True,
+        answer = input(
+            f"\ndelete {len(doomed)} entries, freeing {human(freeable)}? [y/N] "
         )
+        if answer.strip().lower() not in ("y", "yes"):
+            raise SystemExit("aborted.")
     for entry in doomed:
         if entry.path.is_dir():
             shutil.rmtree(entry.path)
@@ -751,9 +698,59 @@ def remove(doomed: list[Entry], freeable: int, yes: bool) -> None:
             entry.path.unlink()
         for extra in entry.extras:
             extra.unlink(missing_ok=True)
-        click.echo(f"removed {entry.name} ({human(entry.kib)})")
-    click.echo(f"freed {human(freeable)}.")
+        print(f"removed {entry.name} ({human(entry.kib)})")
+    print(f"freed {human(freeable)}.")
 
 
-def main() -> None:
-    cli(prog_name="hs-gc-caches")
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="hs-gc-caches",
+        description="Inspect and reclaim the Haskell caches nothing else collects.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    list_parser = commands.add_parser(
+        "list",
+        help="Show every entry: size, last write, child count, owner.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  hs-gc-caches list
+  hs-gc-caches list --target ghcide
+  hs-gc-caches list --ghc-glob '~/personal/ghc*/_build/stage1/bin/ghc'""",
+    )
+    add_shared_options(list_parser)
+    list_parser.set_defaults(run=list_cmd)
+
+    clean_parser = commands.add_parser(
+        "clean",
+        help="Remove every entry whose owner no longer exists on this machine.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  hs-gc-caches clean --dry-run
+  hs-gc-caches clean --target ghcide --delete""",
+    )
+    add_shared_options(clean_parser)
+    clean_parser.add_argument(
+        "--include-inplace",
+        action="store_true",
+        help="Also treat '*-inplace' stores as orphans. Only safe once you are "
+        "sure no source tree still builds that compiler.",
+    )
+    clean_parser.add_argument(
+        "--delete", action="store_true", help="Actually remove. Default is a dry run."
+    )
+    clean_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would go and remove nothing. This is the default. "
+        "Passing it turns a stray --delete into an error.",
+    )
+    clean_parser.add_argument(
+        "--yes", action="store_true", help="Skip the confirmation prompt."
+    )
+    clean_parser.set_defaults(run=clean)
+
+    args = parser.parse_args(argv)
+    if args.command == "clean" and args.dry_run and args.delete:
+        clean_parser.error("--dry-run and --delete contradict each other.")
+    args.run(args)

@@ -1,14 +1,23 @@
 {
-  description = "Nix-packaged utilities for working on Haskell Language Server";
+  description = "Nix-packaged utilities for working on Haskell Language Server, and HLS built from source";
 
   inputs = {
-    # The revision that the haskell-language-server flake pins, so the GHC patch
-    # versions match and both share the cabal store.
-    nixpkgs.url = "github:NixOS/nixpkgs/ed142ab1b3a092c4d149245d0c4126a5d7ea00b0";
+    # Matches the GHCs of the HLS dev shell, so both share the cabal store.
+    nixpkgs.follows = "hls-master/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     git-hooks = {
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    hls-master.url = "github:haskell/haskell-language-server";
+    hls-release = {
+      url = "github:haskell/haskell-language-server/2.15.0.0";
+      flake = false;
+    };
+    hie-bios = {
+      url = "github:haskell/hie-bios/release-0.21.0";
+      flake = false;
     };
   };
 
@@ -17,35 +26,73 @@
       nixpkgs,
       flake-utils,
       git-hooks,
+      hls-master,
+      hls-release,
+      hie-bios,
       ...
     }:
-    flake-utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ] (
+    let
+      inherit (nixpkgs) lib;
+
+      # Upstream HLS's tested-with list. Keep in sync with DEFAULT_VERSIONS in
+      # hls_utils/_common.py.
+      ghcs = [
+        "ghc96"
+        "ghc98"
+        "ghc910"
+        "ghc912"
+        "ghc914"
+      ];
+
+      hls = import ./nix/hls.nix {
+        inherit
+          lib
+          ghcs
+          hls-master
+          hls-release
+          hie-bios
+          ;
+      };
+    in
+    {
+      lib = {
+        inherit (hls)
+          mkHls
+          hlsFor
+          hlsMasterFor
+          pinsFor
+          ;
+        sources = {
+          master = hls-master;
+          release = hls-release;
+        };
+      };
+
+      overlays = {
+        default = hls.mkOverlay hls.hlsFor;
+        master = hls.mkOverlay hls.hlsMasterFor;
+      };
+    }
+    // flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (
       system:
       let
-        pkgs = import nixpkgs {
-          inherit system;
-          config = {
-            allowBroken = true;
-          };
-        };
+        pkgs = nixpkgs.legacyPackages.${system};
 
-        # Keep in sync with DEFAULT_VERSIONS in hls_utils/_common.py.
-        ghcs = {
-          ghc96 = pkgs.haskell.packages.ghc96.ghc;
-          ghc98 = pkgs.haskell.packages.ghc98.ghc;
-          ghc910 = pkgs.haskell.packages.ghc910.ghc;
-          ghc912 = pkgs.haskell.packages.ghc912.ghc;
-          ghc914 = pkgs.haskell.packages.ghc914.ghc;
-        };
-        # A file, because makeWrapper mangles the JSON when we pass it inline.
-        ghcsFile = pkgs.writeText "hls-compat-ghcs.json" (
-          builtins.toJSON (pkgs.lib.mapAttrs (_: ghc: "${ghc}/bin/ghc") ghcs)
+        ghcsFile = pkgs.writeText "hls-utils-ghcs.json" (
+          builtins.toJSON (
+            map (ghc: [
+              ghc
+              "${pkgs.haskell.packages.${ghc}.ghc}/bin/ghc"
+            ]) ghcs
+          )
         );
         cLibs = [
           pkgs.gmp
           pkgs.zlib
           pkgs.ncurses
         ];
+
+        python = pkgs.python3.withPackages (ps: [ ps.pytest ]);
 
         src = pkgs.lib.fileset.toSource {
           root = ./.;
@@ -62,8 +109,9 @@
           pyproject = true;
           inherit src;
           build-system = [ pkgs.python3Packages.setuptools ];
-          dependencies = [ pkgs.python3Packages.click ];
-          nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
+          postPatch = ''
+            substituteInPlace hls_utils/_common.py --replace-fail '"@ghcs@"' '"${ghcsFile}"'
+          '';
           # A C-FFI dependency that is not yet in the store needs LIBRARY_PATH to
           # link (-lz) and C_INCLUDE_PATH to compile its cbits (zlib.h).
           makeWrapperArgs = [
@@ -80,10 +128,6 @@
               pkgs.coreutils
             ])
             "--prefix"
-            "LD_LIBRARY_PATH"
-            ":"
-            (pkgs.lib.makeLibraryPath cLibs)
-            "--prefix"
             "LIBRARY_PATH"
             ":"
             (pkgs.lib.makeLibraryPath cLibs)
@@ -91,9 +135,6 @@
             "C_INCLUDE_PATH"
             ":"
             (pkgs.lib.makeSearchPathOutput "dev" "include" cLibs)
-            "--set"
-            "HLS_GHCS_FILE"
-            "${ghcsFile}"
           ];
         };
 
@@ -101,12 +142,7 @@
         hls-utils-tests =
           pkgs.runCommandLocal "hls-utils-tests"
             {
-              nativeBuildInputs = [
-                (pkgs.python3.withPackages (ps: [
-                  ps.click
-                  ps.pytest
-                ]))
-              ];
+              nativeBuildInputs = [ python ];
             }
             ''
               cp -r ${src}/. .
@@ -115,103 +151,64 @@
               touch "$out"
             '';
 
-        # A plain shell script, because PATH reaches the spawned test only when
-        # no makeWrapper sits in the process ancestry. HLS testdata uses a direct
-        # cradle, so a test finds its GHC libdir through the ghc on PATH. The
-        # wrong GHC fails every session-loading test on an ABI mismatch.
-        hls-run-testsuites = pkgs.writeShellScriptBin "hls-run-testsuites" ''
-            set -euo pipefail
-            versions=""
-            targets=""
-            while [ "$#" -gt 0 ]; do
-              case "$1" in
-                -t | --targets)
-                  shift
-                  targets="$*"
-                  break
-                  ;;
-                *)
-                  versions="$versions $1"
-                  shift
-                  ;;
-              esac
-            done
-            [ -z "$versions" ] && versions="${pkgs.lib.concatStringsSep " " (builtins.attrNames ghcs)}"
-            rc=0
-            for v in $versions; do
-              bindir=""
-              case "$v" in
-          ${pkgs.lib.concatStringsSep "\n" (
-            pkgs.lib.mapAttrsToList (v: ghc: "          ${v}) bindir=${ghc}/bin ;;") ghcs
-          )}
-                *) echo "=== $v: unknown version ==="; rc=1; continue ;;
-              esac
-              if [ -n "$targets" ]; then
-                PATH="$bindir:$PATH" ${hls-utils}/bin/hls-run-testsuites-core "$v" -t $targets || rc=1
-              else
-                PATH="$bindir:$PATH" ${hls-utils}/bin/hls-run-testsuites-core "$v" || rc=1
-              fi
-            done
-            exit "$rc"
-        '';
-
-        utils = {
-          inherit hls-utils hls-run-testsuites;
-        };
+        hlsMatrix =
+          prefix: build:
+          lib.listToAttrs (
+            map (ghc: lib.nameValuePair "${prefix}${ghc}" (build pkgs.haskell.packages.${ghc})) ghcs
+          );
+        hlsPackages = {
+          hls = hls.hlsFor pkgs.haskellPackages;
+        }
+        // hlsMatrix "hls-" hls.hlsFor
+        // hlsMatrix "hls-master-" hls.hlsMasterFor;
 
         pre-commit-check = git-hooks.lib.${system}.run {
           src = ./.;
           hooks = {
-            nixfmt-rfc-style = {
-              enable = true;
-              # nixfmt-rfc-style is a deprecated alias in this nixpkgs.
-              package = pkgs.nixfmt;
-            };
+            nixfmt.enable = true;
             ruff.enable = true;
             ruff-format.enable = true;
             pyright = {
               enable = true;
-              # pytest is not on the path of the type checker, so tests/ stays out.
-              files = "^hls_utils/";
+              entry = "${pkgs.lib.getExe pkgs.pyright} --pythonpath ${pkgs.lib.getExe python}";
             };
-            shfmt = {
-              enable = true;
-              args = [
-                "-i"
-                "2"
-              ];
-            };
-            shellcheck.enable = true;
           };
         };
       in
       {
-        packages = utils // {
+        packages = {
+          inherit hls-utils;
           default = hls-utils;
-        };
+        }
+        // hlsPackages;
 
         checks = {
           pre-commit-check = pre-commit-check;
           pytest = hls-utils-tests;
+          # Instantiates every HLS build without building it, which catches a
+          # stale pin in seconds.
+          hls = pkgs.writeText "hls-instantiate" (
+            lib.concatMapStringsSep "\n" (drv: builtins.unsafeDiscardOutputDependency drv.drvPath) (
+              lib.attrValues hlsPackages
+            )
+          );
         };
 
         devShells.default = pkgs.mkShell {
           inherit (pre-commit-check) shellHook;
-          packages =
-            builtins.attrValues utils
-            ++ pre-commit-check.enabledPackages
-            ++ [
-              (pkgs.python3.withPackages (ps: [
-                ps.click
-                ps.pytest
-              ]))
-            ];
+          packages = [
+            hls-utils
+          ]
+          ++ pre-commit-check.enabledPackages
+          ++ [
+            python
+          ];
         };
 
         # For the .envrc of another checkout. A shellHook here would install our
         # git hooks into that checkout.
         devShells.tools = pkgs.mkShell {
-          packages = builtins.attrValues utils;
+          packages = [ hls-utils ];
         };
 
         apps = {
@@ -221,7 +218,7 @@
           };
           run-testsuites = {
             type = "app";
-            program = "${hls-run-testsuites}/bin/hls-run-testsuites";
+            program = "${hls-utils}/bin/hls-run-testsuites";
           };
           find-ghc-backports = {
             type = "app";
@@ -234,6 +231,10 @@
           gc-caches = {
             type = "app";
             program = "${hls-utils}/bin/hs-gc-caches";
+          };
+          hls = {
+            type = "app";
+            program = "${hlsPackages.hls}/bin/haskell-language-server";
           };
           default = {
             type = "app";

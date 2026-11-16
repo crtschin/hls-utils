@@ -2,25 +2,17 @@
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 from hls_utils._common import (
     COMPAT_BUILDDIR_PREFIX,
-    DEFAULT_VERSIONS,
-    find_hls_checkout,
-    load_ghc_map,
-    sweep_log_dir,
+    MAX_BACKJUMPS,
+    run_logged,
+    sweep,
 )
 
 PROJECT_NAME = ".hls-compat.project"
-# We write our own project file to skip the cabal.project.local of the developer.
-# cabal resolves package paths relative to this file, so it must live in the
-# checkout.
-PROJECT_CONTENT = "import: cabal.project\n\njobs: 6\n"
-MAX_BACKJUMPS = 10000
-TAIL_LINES = 25
 
 
 def resolve_targets(cli_targets: list[str] | None) -> tuple[list[str], list[str]]:
@@ -41,14 +33,6 @@ def run_for_version(
     targets: list[str],
     extra_flags: list[str],
 ) -> bool:
-    log_path = logs_dir / f"{version}.log"
-    print(f"=== {version} -> {log_path} ===")
-    numeric = subprocess.run(
-        [ghc, "--numeric-version"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
     cmd = [
         "cabal",
         "build",
@@ -63,23 +47,7 @@ def run_for_version(
         *extra_flags,
         *targets,
     ]
-    with log_path.open("w") as log:
-        log.write(f"GHC: {numeric}\n")
-        log.flush()
-        result = subprocess.run(
-            cmd,
-            cwd=hls_dir,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-    if result.returncode == 0:
-        print("  OK")
-        return True
-    print(f"  FAIL (tail {log_path}):")
-    for line in log_path.read_text().splitlines()[-TAIL_LINES:]:
-        print(f"    {line}")
-    return False
+    return run_logged(version, ghc, hls_dir, logs_dir, [cmd])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "versions",
         nargs="*",
-        help=f"GHC versions to check (default: {' '.join(DEFAULT_VERSIONS)}).",
+        help="GHC versions to check (default: every GHC this package provides).",
     )
     parser.add_argument(
         "-t",
@@ -105,39 +73,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
-
-    hls_dir = find_hls_checkout(Path.cwd())
-    if hls_dir is None:
-        print(
-            "error: run this from inside an HLS checkout (no cabal.project found)",
-            file=sys.stderr,
-        )
-        return 2
-
-    ghc_map = load_ghc_map()
-    versions: list[str] = args.versions or DEFAULT_VERSIONS
     targets, extra_flags = resolve_targets(args.targets)
-
-    project_path = hls_dir / PROJECT_NAME
-    project_path.write_text(PROJECT_CONTENT)
-    logs_dir = sweep_log_dir("compat")
-
-    rc = 0
-    try:
-        for version in versions:
-            ghc = ghc_map.get(version)
-            if not ghc:
-                known = " ".join(sorted(ghc_map)) or "(none)"
-                print(f"=== {version}: unknown version (have: {known}) ===")
-                rc = 1
-                continue
-            if not run_for_version(
-                version, ghc, hls_dir, logs_dir, targets, extra_flags
-            ):
-                rc = 1
-    finally:
-        project_path.unlink(missing_ok=True)
-    return rc
+    return sweep(
+        args.versions,
+        PROJECT_NAME,
+        "compat",
+        lambda version, ghc, hls_dir, logs_dir: run_for_version(
+            version, ghc, hls_dir, logs_dir, targets, extra_flags
+        ),
+    )
 
 
 if __name__ == "__main__":
